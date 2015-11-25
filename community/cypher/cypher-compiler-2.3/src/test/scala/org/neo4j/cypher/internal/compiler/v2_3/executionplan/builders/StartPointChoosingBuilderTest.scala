@@ -21,19 +21,19 @@ package org.neo4j.cypher.internal.compiler.v2_3.executionplan.builders
 
 import org.mockito.Matchers
 import org.mockito.Mockito._
-import org.neo4j.cypher.internal.compiler.v2_3.ast
-import org.neo4j.cypher.internal.compiler.v2_3.ast.convert.commands.ExpressionConverters
+import org.neo4j.cypher.internal.compiler.v2_3.ast.convert.commands.ExpressionConverters._
 import org.neo4j.cypher.internal.compiler.v2_3.commands._
 import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions._
 import org.neo4j.cypher.internal.compiler.v2_3.commands.predicates.{Equals, HasLabel}
 import org.neo4j.cypher.internal.compiler.v2_3.commands.values.TokenType._
 import org.neo4j.cypher.internal.compiler.v2_3.commands.values.{KeyToken, TokenType}
 import org.neo4j.cypher.internal.compiler.v2_3.executionplan.PartiallySolvedQuery
-import org.neo4j.cypher.internal.compiler.v2_3.helpers.NonEmptyList
 import org.neo4j.cypher.internal.compiler.v2_3.pipes.FakePipe
 import org.neo4j.cypher.internal.compiler.v2_3.spi.PlanContext
-import org.neo4j.cypher.internal.compiler.v2_3.symbols._
-import org.neo4j.graphdb.Direction
+import org.neo4j.cypher.internal.frontend.v2_3.{SemanticDirection, ast}
+import org.neo4j.cypher.internal.frontend.v2_3.ast.AstConstructionTestSupport
+import org.neo4j.cypher.internal.frontend.v2_3.helpers.NonEmptyList
+import org.neo4j.cypher.internal.frontend.v2_3.symbols._
 import org.neo4j.kernel.api.constraints.UniquenessConstraint
 import org.neo4j.kernel.api.index.IndexDescriptor
 
@@ -146,7 +146,7 @@ class StartPointChoosingBuilderTest extends BuilderTest {
     val plan = assertAccepts(query)
 
     // Then
-    plan.query.start.toList should equal(Seq(Unsolved(SchemaIndex(identifier, label, property, AnyIndex, None))))
+    plan.query.start.toList should equal(Seq(Unsolved(SchemaIndex(identifier, label, property, UniqueIndex, None))))
   }
 
   test("should_pick_an_index_if_only_one_possible_exists_other_side") {
@@ -184,7 +184,7 @@ class StartPointChoosingBuilderTest extends BuilderTest {
     val plan = assertAccepts(query)
 
     // Then
-    plan.query.start.toList should equal(Seq(Unsolved(SchemaIndex(identifier, label, property, AnyIndex, None))))
+    plan.query.start.toList should equal(Seq(Unsolved(SchemaIndex(identifier, label, property, UniqueIndex, None))))
   }
 
   test("should_pick_an_index_if_only_one_possible_nullable_property_exists") {
@@ -241,7 +241,7 @@ class StartPointChoosingBuilderTest extends BuilderTest {
     val plan = assertAccepts(query)
 
     // Then
-    plan.query.start.toList should equal(Seq(Unsolved(SchemaIndex(identifier, label, property, AnyIndex, None))))
+    plan.query.start.toList should equal(Seq(Unsolved(SchemaIndex(identifier, label, property, UniqueIndex, None))))
   }
 
   test("should_pick_any_index_available") {
@@ -266,17 +266,16 @@ class StartPointChoosingBuilderTest extends BuilderTest {
   }
 
   test("should_pick_any_index_available_for_prefix_search") {
-    object inner extends org.neo4j.cypher.internal.compiler.v2_3.ast.AstConstructionTestSupport {
-      import ExpressionConverters._
+    object inner extends AstConstructionTestSupport {
 
       def run() = {
         // Given
         val labelPredicate = HasLabel(Identifier(identifier), KeyToken.Unresolved(label, TokenType.Label))
-        val like: ast.Like = ast.Like(ast.Property(ident("n"), ast.PropertyKeyName(property)_)_, ast.LikePattern(ast.StringLiteral("prefix%")_))_
-        val likePredicate = like.asCommandPredicate
+        val startsWith: ast.StartsWith = ast.StartsWith(ast.Property(ident("n"), ast.PropertyKeyName(property)_)_, ast.StringLiteral("prefix")_)_
+        val startsWithPredicate = toCommandPredicate(startsWith)
 
         val query = newQuery(
-          where = Seq(labelPredicate, likePredicate),
+          where = Seq(labelPredicate, startsWithPredicate),
           patterns = Seq(SingleNode(identifier))
         )
 
@@ -295,15 +294,14 @@ class StartPointChoosingBuilderTest extends BuilderTest {
   }
 
   test("should pick any index available for range queries") {
-    object inner extends org.neo4j.cypher.internal.compiler.v2_3.ast.AstConstructionTestSupport {
-      import ExpressionConverters._
+    object inner extends AstConstructionTestSupport {
 
       def run() = {
         // Given
         val labelPredicate = HasLabel(Identifier(identifier), KeyToken.Unresolved(label, TokenType.Label))
         val prop: ast.Property = ast.Property(ident("n"), ast.PropertyKeyName("prop") _) _
         val inequality = ast.AndedPropertyInequalities(ident("n"), prop, NonEmptyList(ast.GreaterThan(prop, ast.SignedDecimalIntegerLiteral("42") _) _))
-        val inequalityPredicate = inequality.asCommandPredicate
+        val inequalityPredicate = toCommandPredicate(inequality)
 
         val query = newQuery(
           where = Seq(labelPredicate, inequalityPredicate),
@@ -343,7 +341,7 @@ class StartPointChoosingBuilderTest extends BuilderTest {
     val result = assertAccepts(query).query
 
     // Then
-    result.start.find(_.token.isInstanceOf[SchemaIndex]) should equal(Some(Unsolved(SchemaIndex(identifier, label, otherProperty, AnyIndex, None))))
+    result.start.find(_.token.isInstanceOf[SchemaIndex]) should equal(Some(Unsolved(SchemaIndex(identifier, label, otherProperty, UniqueIndex, None))))
   }
 
   test("should_prefer_uniqueness_constraint_indexes_over_other_indexes_other_side") {
@@ -365,7 +363,7 @@ class StartPointChoosingBuilderTest extends BuilderTest {
     val result = assertAccepts(query).query
 
     // Then
-    result.start.find(_.token.isInstanceOf[SchemaIndex]) should equal(Some(Unsolved(SchemaIndex(identifier, label, property, AnyIndex, None))))
+    result.start.find(_.token.isInstanceOf[SchemaIndex]) should equal(Some(Unsolved(SchemaIndex(identifier, label, property, UniqueIndex, None))))
   }
 
   test("should_produce_label_start_points_when_no_property_predicate_is_used") {
@@ -476,7 +474,7 @@ class StartPointChoosingBuilderTest extends BuilderTest {
         Equals(Property(Identifier(otherIdentifier), propertyKey), expression2)),
 
       patterns = Seq(
-        ShortestPath("p", SingleNode(identifier), SingleNode(otherIdentifier), Nil, Direction.OUTGOING, false, None, single = true, None))
+        ShortestPath("p", SingleNode(identifier), SingleNode(otherIdentifier), Nil, SemanticDirection.OUTGOING, allowZeroLength = false, None, single = true, None))
     )
 
     when(context.getIndexRule(label, property)).thenReturn(None)
@@ -498,8 +496,8 @@ class StartPointChoosingBuilderTest extends BuilderTest {
     val query = newQuery(
       start = Seq(NodeById("a", 0)),
       patterns = Seq(
-        RelatedTo(SingleNode("a"),SingleNode("b"), "x", Seq.empty, Direction.OUTGOING, Map.empty),
-        RelatedTo(SingleNode("c"), SingleNode("d"), "x", Seq.empty, Direction.OUTGOING, Map.empty)
+        RelatedTo(SingleNode("a"),SingleNode("b"), "x", Seq.empty, SemanticDirection.OUTGOING, Map.empty),
+        RelatedTo(SingleNode("c"), SingleNode("d"), "x", Seq.empty, SemanticDirection.OUTGOING, Map.empty)
       )
     )
 
@@ -528,7 +526,7 @@ class StartPointChoosingBuilderTest extends BuilderTest {
     // Given
     val query = newQuery(
       start = Seq(RelationshipById("r", 123)),
-      patterns = Seq(RelatedTo(identifier, otherIdentifier, "r", "KNOWS", Direction.BOTH))
+      patterns = Seq(RelatedTo(identifier, otherIdentifier, "r", "KNOWS", SemanticDirection.BOTH))
     )
 
     // When + Then

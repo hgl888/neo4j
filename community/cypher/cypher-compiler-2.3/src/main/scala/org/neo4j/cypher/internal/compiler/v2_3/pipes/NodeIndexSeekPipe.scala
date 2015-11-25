@@ -20,13 +20,15 @@
 package org.neo4j.cypher.internal.compiler.v2_3.pipes
 
 import org.neo4j.cypher.internal.compiler.v2_3._
-import org.neo4j.cypher.internal.compiler.v2_3.ast.{LabelToken, PropertyKeyToken}
-import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions.{InequalitySeekRangeExpression, Expression, PrefixSeekRangeExpression}
+import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions.{Expression, InequalitySeekRangeExpression, PrefixSeekRangeExpression}
 import org.neo4j.cypher.internal.compiler.v2_3.commands.{QueryExpression, RangeQueryExpression, indexQuery}
-import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{Effects, ReadsLabel, ReadsNodeProperty, ReadsNodes}
-import org.neo4j.cypher.internal.compiler.v2_3.planDescription.InternalPlanDescription.Arguments.{InequalityIndex, Index, PrefixIndex}
+import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{Effects, ReadsGivenNodeProperty, ReadsNodesWithLabels}
+import org.neo4j.cypher.internal.compiler.v2_3.planDescription.InternalPlanDescription.Arguments.{Index, InequalityIndex, PrefixIndex}
 import org.neo4j.cypher.internal.compiler.v2_3.planDescription.{NoChildren, PlanDescriptionImpl}
-import org.neo4j.cypher.internal.compiler.v2_3.symbols.{CTNode, SymbolTable}
+import org.neo4j.cypher.internal.compiler.v2_3.symbols.SymbolTable
+import org.neo4j.cypher.internal.frontend.v2_3.InternalException
+import org.neo4j.cypher.internal.frontend.v2_3.ast.{LabelToken, PropertyKeyToken}
+import org.neo4j.cypher.internal.frontend.v2_3.symbols.CTNode
 import org.neo4j.kernel.api.index.IndexDescriptor
 
 case class NodeIndexSeekPipe(ident: String,
@@ -81,7 +83,7 @@ case class NodeIndexSeekPipe(ident: String,
     new PlanDescriptionImpl(this.id, name, NoChildren, Seq(indexDesc), identifiers)
   }
 
-  def symbols: SymbolTable = new SymbolTable(Map(ident -> CTNode))
+  def symbols = new SymbolTable(Map(ident -> CTNode))
 
   override def monitor = pipeMonitor
 
@@ -92,7 +94,7 @@ case class NodeIndexSeekPipe(ident: String,
 
   def sources: Seq[Pipe] = Seq.empty
 
-  override def localEffects = Effects(ReadsNodes, ReadsLabel(label.name), ReadsNodeProperty(propertyKey.name))
+  override def localEffects = Effects(ReadsNodesWithLabels(label.name), ReadsGivenNodeProperty(propertyKey.name))
 
   def withEstimatedCardinality(estimated: Double) = copy()(Some(estimated))
 }

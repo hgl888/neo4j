@@ -29,6 +29,7 @@ import org.neo4j.io.pagecache.tracing.EvictionEvent;
 import org.neo4j.io.pagecache.tracing.FlushEvent;
 import org.neo4j.io.pagecache.tracing.FlushEventOpportunity;
 import org.neo4j.io.pagecache.tracing.PageFaultEvent;
+import org.neo4j.unsafe.impl.internal.dragons.MemoryManager;
 import org.neo4j.unsafe.impl.internal.dragons.UnsafeUtil;
 
 import static java.lang.String.format;
@@ -414,7 +415,6 @@ final class MuninnPage extends StampedLock implements Page
         if ( pointer == 0 )
         {
             pointer = memoryManager.allocateAligned( size() );
-            UnsafeUtil.setMemory( pointer, size(), MuninnPageCache.ZERO_BYTE );
         }
     }
 

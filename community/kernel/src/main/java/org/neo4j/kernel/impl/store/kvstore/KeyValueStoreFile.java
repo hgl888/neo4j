@@ -141,7 +141,7 @@ public class KeyValueStoreFile implements Closeable
     private final int valueSize;
     private final Headers headers;
     private final int headerEntries;
-    /** Includes header entries (and data entries), but not the trailer entry. */
+    /** Includes header, data and trailer entries. */
     private final int totalEntries;
     /**
      * The page catalogue is used to find the appropriate (first) page without having to do I/O.
@@ -208,14 +208,7 @@ public class KeyValueStoreFile implements Closeable
 
     private static boolean visitable( BigEndianByteArrayBuffer key, boolean acceptZeroKey )
     {
-        if ( !acceptZeroKey )
-        {
-            if ( key.allZeroes() )
-            {
-                return false;
-            }
-        }
-        return true;
+        return acceptZeroKey || !key.allZeroes();
     }
 
     private static void readKeyValuePair( PageCursor cursor, int offset, WritableBuffer key, WritableBuffer value )

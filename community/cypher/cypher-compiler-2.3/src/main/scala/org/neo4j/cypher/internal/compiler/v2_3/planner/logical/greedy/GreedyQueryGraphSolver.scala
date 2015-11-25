@@ -19,12 +19,12 @@
  */
 package org.neo4j.cypher.internal.compiler.v2_3.planner.logical.greedy
 
-import org.neo4j.cypher.internal.compiler.v2_3.{HintException, IndexHintException}
+import org.neo4j.cypher.internal.compiler.v2_3.helpers.Converge.iterateUntilConverged
 import org.neo4j.cypher.internal.compiler.v2_3.planner.QueryGraph
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical._
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.plans.{IdName, LogicalPlan}
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.steps.solveOptionalMatches
-import org.neo4j.cypher.internal.compiler.v2_3.helpers.Converge.iterateUntilConverged
+import org.neo4j.cypher.internal.frontend.v2_3.HintException
 
 class GreedyQueryGraphSolver(planCombiner: CandidateGenerator[GreedyPlanTable],
                              val config: QueryPlannerConfiguration = QueryPlannerConfiguration.default)
@@ -64,7 +64,7 @@ class GreedyQueryGraphSolver(planCombiner: CandidateGenerator[GreedyPlanTable],
                 acc + (ids -> candidates)
             }
 
-          val best: Iterable[LogicalPlan] = candidatesPerIds.values.map(kit.pickBest(_)).flatten
+          val best: Iterable[LogicalPlan] = candidatesPerIds.values.flatMap(kit.pickBest(_))
 
           //          println(s"best: ${best.map(_.availableSymbols)}")
           val result = best.foldLeft(planTable)(_ + _)

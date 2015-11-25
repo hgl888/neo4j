@@ -20,8 +20,10 @@
 package org.neo4j.cypher.internal.spi.v2_3
 
 import org.neo4j.cypher.MissingIndexException
+import org.neo4j.cypher.internal.compiler.v2_3.pipes.EntityProducer
+import org.neo4j.cypher.internal.compiler.v2_3.pipes.matching.ExpanderStep
 import org.neo4j.cypher.internal.compiler.v2_3.spi._
-import org.neo4j.graphdb.GraphDatabaseService
+import org.neo4j.graphdb.{Node, GraphDatabaseService}
 import org.neo4j.kernel.GraphDatabaseAPI
 import org.neo4j.kernel.api.Statement
 import org.neo4j.kernel.api.constraints.UniquenessConstraint
@@ -29,6 +31,8 @@ import org.neo4j.kernel.api.exceptions.KernelException
 import org.neo4j.kernel.api.exceptions.schema.SchemaKernelException
 import org.neo4j.kernel.api.index.{IndexDescriptor, InternalIndexState}
 import org.neo4j.kernel.impl.transaction.log.TransactionIdStore
+
+import scala.collection.JavaConverters._
 
 class TransactionBoundPlanContext(initialStatement: Statement, val gdb: GraphDatabaseService)
   extends TransactionBoundTokenContext(initialStatement) with PlanContext {
@@ -41,10 +45,20 @@ class TransactionBoundPlanContext(initialStatement: Statement, val gdb: GraphDat
     getOnlineIndex(statement.readOperations().indexesGetForLabelAndPropertyKey(labelId, propertyKeyId))
   }
 
+  def hasIndexRule(labelName: String): Boolean = {
+    val labelId = statement.readOperations().labelGetForName(labelName)
+
+    val indexDescriptors = statement.readOperations().indexesGetForLabel(labelId).asScala
+    val onlineIndexDescriptors = indexDescriptors.flatMap(getOnlineIndex)
+
+    onlineIndexDescriptors.nonEmpty
+  }
+
   def getUniqueIndexRule(labelName: String, propertyKey: String): Option[IndexDescriptor] = evalOrNone {
     val labelId = statement.readOperations().labelGetForName(labelName)
     val propertyKeyId = statement.readOperations().propertyKeyGetForName(propertyKey)
 
+    // here we do not need to use getOnlineIndex method because uniqueness constraint creation is synchronous
     Some(statement.readOperations().uniqueIndexGetForLabelAndPropertyKey(labelId, propertyKeyId))
   }
 
@@ -89,6 +103,16 @@ class TransactionBoundPlanContext(initialStatement: Statement, val gdb: GraphDat
     }
     statement.readOperations().schemaStateGetOrCreate(key, javaCreator)
   }
+
+
+  // Legacy traversal matchers (pre-Ronja) (These were moved out to remove the dependency on the kernel)
+  override def monoDirectionalTraversalMatcher(steps: ExpanderStep, start: EntityProducer[Node]) =
+    new MonoDirectionalTraversalMatcher(steps, start)
+
+  override def bidirectionalTraversalMatcher(steps: ExpanderStep,
+                                             start: EntityProducer[Node],
+                                             end: EntityProducer[Node]) =
+    new BidirectionalTraversalMatcher(steps, start, end)
 
   val statistics: GraphStatistics =
     InstrumentedGraphStatistics(TransactionBoundGraphStatistics(statement), MutableGraphStatisticsSnapshot())

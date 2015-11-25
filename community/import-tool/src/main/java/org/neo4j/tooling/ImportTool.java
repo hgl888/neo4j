@@ -19,8 +19,10 @@
  */
 package org.neo4j.tooling;
 
+import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.PrintStream;
 import java.lang.Thread.UncaughtExceptionHandler;
 import java.nio.charset.Charset;
@@ -33,6 +35,9 @@ import org.neo4j.function.BiFunction;
 import org.neo4j.function.Function;
 import org.neo4j.helpers.Args;
 import org.neo4j.helpers.Args.Option;
+import org.neo4j.helpers.ArrayUtil;
+import org.neo4j.helpers.Exceptions;
+import org.neo4j.helpers.Strings;
 import org.neo4j.helpers.collection.IterableWrapper;
 import org.neo4j.helpers.collection.Iterables;
 import org.neo4j.io.fs.DefaultFileSystemAbstraction;
@@ -44,12 +49,14 @@ import org.neo4j.kernel.impl.storemigration.FileOperation;
 import org.neo4j.kernel.impl.storemigration.StoreFile;
 import org.neo4j.kernel.impl.storemigration.StoreFileType;
 import org.neo4j.kernel.impl.util.Converters;
+import org.neo4j.kernel.impl.util.OsBeanUtil;
 import org.neo4j.kernel.impl.util.Validator;
 import org.neo4j.kernel.impl.util.Validators;
 import org.neo4j.kernel.lifecycle.LifeSupport;
 import org.neo4j.unsafe.impl.batchimport.BatchImporter;
 import org.neo4j.unsafe.impl.batchimport.ParallelBatchImporter;
 import org.neo4j.unsafe.impl.batchimport.cache.idmapping.string.DuplicateInputIdException;
+import org.neo4j.unsafe.impl.batchimport.input.Collector;
 import org.neo4j.unsafe.impl.batchimport.input.Input;
 import org.neo4j.unsafe.impl.batchimport.input.InputNode;
 import org.neo4j.unsafe.impl.batchimport.input.InputRelationship;
@@ -64,9 +71,9 @@ import static java.nio.charset.Charset.defaultCharset;
 
 import static org.neo4j.helpers.Exceptions.launderedException;
 import static org.neo4j.helpers.Format.bytes;
+import static org.neo4j.helpers.Strings.TAB;
 import static org.neo4j.kernel.impl.util.Converters.withDefault;
 import static org.neo4j.unsafe.impl.batchimport.Configuration.BAD_FILE_NAME;
-import static org.neo4j.unsafe.impl.batchimport.cache.AvailableMemoryCalculator.RUNTIME;
 import static org.neo4j.unsafe.impl.batchimport.input.Collectors.badCollector;
 import static org.neo4j.unsafe.impl.batchimport.input.Collectors.collect;
 import static org.neo4j.unsafe.impl.batchimport.input.InputEntityDecorators.NO_NODE_DECORATOR;
@@ -94,7 +101,8 @@ public class ImportTool
                         + "The first line must contain the header. "
                         + "Multiple data sources like these can be specified in one import, "
                         + "where each data source has its own header. "
-                        + "Note that file groups must be enclosed in quotation marks." ),
+                        + "Note that file groups must be enclosed in quotation marks.",
+                        true ),
         RELATIONSHIP_DATA( "relationships", null,
                 "[:RELATIONSHIP_TYPE] \"<file1>" + MULTI_FILE_DELIMITER + "<file2>" +
                 MULTI_FILE_DELIMITER + "...\"",
@@ -103,7 +111,8 @@ public class ImportTool
                         + "The first line must contain the header. "
                         + "Multiple data sources like these can be specified in one import, "
                         + "where each data source has its own header. "
-                        + "Note that file groups must be enclosed in quotation marks." ),
+                        + "Note that file groups must be enclosed in quotation marks.",
+                        true ),
         DELIMITER( "delimiter", null,
                 "<delimiter-character>",
                 "Delimiter character, or 'TAB', between values in CSV data. The default option is `" + COMMAS.delimiter() + "`." ),
@@ -121,11 +130,15 @@ public class ImportTool
         MULTILINE_FIELDS( "multiline-fields", org.neo4j.csv.reader.Configuration.DEFAULT.multilineFields(),
                 "<true/false>",
                 "Whether or not fields from input source can span multiple lines, i.e. contain newline characters." ),
+
         INPUT_ENCODING( "input-encoding", null,
                 "<character set>",
                 "Character set that input data is encoded in. Provided value must be one out of the available "
                         + "character sets in the JVM, as provided by Charset#availableCharsets(). "
                         + "If no input encoding is provided, the default character set of the JVM will be used." ),
+        IGNORE_EMPTY_STRINGS( "ignore-empty-strings", org.neo4j.csv.reader.Configuration.DEFAULT.emptyQuotedStringsAsNull(),
+                "<true/false>",
+                "Whether or not empty string fields, i.e. \"\" from input source are ignored, i.e. treated as null." ),
         ID_TYPE( "id-type", IdType.STRING,
                 "<id-type>",
                 "One out of " + Arrays.toString( IdType.values() )
@@ -163,19 +176,31 @@ public class ImportTool
                         + "nodes within the same group having the same id, the first encountered will be imported "
                         + "whereas consecutive such nodes will be skipped. "
                         + "Skipped nodes will be logged"
-                        + ", containing at most number of entites specified by " + BAD_TOLERANCE.key() + "." );
+                        + ", containing at most number of entities specified by " + BAD_TOLERANCE.key() + "." ),
+        IGNORE_EXTRA_COLUMNS( "ignore-extra-columns", Boolean.FALSE,
+                "<true/false>",
+                "Whether or not to ignore extra columns in the data not specified by the header. "
+                        + "Skipped columns will be logged, containing at most number of entities specified by "
+                        + BAD_TOLERANCE.key() + "." );
 
         private final String key;
         private final Object defaultValue;
         private final String usage;
         private final String description;
+        private final boolean keyAndUsageGoTogether;
 
         Options( String key, Object defaultValue, String usage, String description )
+        {
+            this( key, defaultValue, usage, description, false );
+        }
+
+        Options( String key, Object defaultValue, String usage, String description, boolean keyAndUsageGoTogether )
         {
             this.key = key;
             this.defaultValue = defaultValue;
             this.usage = usage;
             this.description = description;
+            this.keyAndUsageGoTogether = keyAndUsageGoTogether;
         }
 
         String key()
@@ -190,11 +215,16 @@ public class ImportTool
 
         void printUsage( PrintStream out )
         {
-            out.println( argument() + " " + usage );
+            out.println( argument() + spaceInBetweenArgumentAndUsage() + usage );
             for ( String line : Args.splitLongLine( descriptionWithDefaultValue().replace( "`", "" ), 80 ) )
             {
                 out.println( "\t" + line );
             }
+        }
+
+        private String spaceInBetweenArgumentAndUsage()
+        {
+            return keyAndUsageGoTogether ? "" : " ";
         }
 
         String descriptionWithDefaultValue()
@@ -214,7 +244,7 @@ public class ImportTool
         String manPageEntry()
         {
             String filteredDescription = descriptionWithDefaultValue().replace( availableProcessorsHint(), "" );
-            String usageString = (usage.length() > 0) ? " " + usage : "";
+            String usageString = (usage.length() > 0) ? spaceInBetweenArgumentAndUsage() + usage : "";
             return "*" + argument() + usageString + "*::\n" + filteredDescription + "\n\n";
         }
 
@@ -259,7 +289,7 @@ public class ImportTool
     public static void main( String[] incomingArguments, boolean defaultSettingsSuitableForTests ) throws IOException
     {
         Args args = Args.parse( incomingArguments );
-        if ( asksForUsage( args ) )
+        if ( ArrayUtil.isEmpty( incomingArguments ) || asksForUsage( args ) )
         {
             printUsage( System.out );
             return;
@@ -273,12 +303,15 @@ public class ImportTool
         Input input = null;
         int badTolerance;
         Charset inputEncoding;
-        boolean skipBadRelationships, skipDuplicateNodes;
+        boolean skipBadRelationships, skipDuplicateNodes, ignoreExtraColumns;
 
         try
         {
             storeDir = args.interpretOption( Options.STORE_DIR.key(), Converters.<File>mandatory(),
                     Converters.toFile(), Validators.DIRECTORY_IS_WRITABLE, Validators.CONTAINS_NO_EXISTING_DATABASE );
+
+            File badFile = new File( storeDir, BAD_FILE_NAME );
+            OutputStream badOutput = new BufferedOutputStream( fs.openAsOutputStream( badFile, false ) );
             nodesFiles = INPUT_FILES_EXTRACTOR.apply( args, Options.NODE_DATA.key() );
             relationshipsFiles = INPUT_FILES_EXTRACTOR.apply( args, Options.RELATIONSHIP_DATA.key() );
             validateInputFiles( nodesFiles, relationshipsFiles );
@@ -293,15 +326,23 @@ public class ImportTool
                     (Boolean)Options.SKIP_BAD_RELATIONSHIPS.defaultValue(), true );
             skipDuplicateNodes = args.getBoolean( Options.SKIP_DUPLICATE_NODES.key(),
                     (Boolean)Options.SKIP_DUPLICATE_NODES.defaultValue(), true );
-            input = new CsvInput(
-                    nodeData( inputEncoding, nodesFiles ), defaultFormatNodeFileHeader(),
+            ignoreExtraColumns = args.getBoolean( Options.IGNORE_EXTRA_COLUMNS.key(),
+                    (Boolean)Options.IGNORE_EXTRA_COLUMNS.defaultValue(), true );
+
+            Collector badCollector = badCollector( badOutput, badTolerance, collect( skipBadRelationships,
+                    skipDuplicateNodes, ignoreExtraColumns ) );
+
+            input = new CsvInput( nodeData( inputEncoding, nodesFiles ), defaultFormatNodeFileHeader(),
                     relationshipData( inputEncoding, relationshipsFiles ), defaultFormatRelationshipFileHeader(),
-                    idType, csvConfiguration( args, defaultSettingsSuitableForTests ),
-                    badCollector( badTolerance, collect( skipBadRelationships, skipDuplicateNodes ) ) );
+                    idType, csvConfiguration( args, defaultSettingsSuitableForTests ), badCollector );
         }
         catch ( IllegalArgumentException e )
         {
             throw andPrintError( "Input error", e, false );
+        }
+        catch ( IOException e )
+        {
+            throw andPrintError( "File error", e, false );
         }
 
         LifeSupport life = new LifeSupport();
@@ -328,11 +369,16 @@ public class ImportTool
         }
         finally
         {
-            File badFile = new File( storeDir, BAD_FILE_NAME );
-            if ( badFile.exists() )
+            input.badCollector().close();
+
+            if ( input.badCollector().badEntries() > 0 )
             {
-                System.out.println( "There were bad entries which were skipped and logged into " +
-                        badFile.getAbsolutePath() );
+                File badFile = new File( storeDir, BAD_FILE_NAME );
+                if ( badFile.exists() )
+                {
+                    System.out.println(
+                            "There were bad entries which were skipped and logged into " + badFile.getAbsolutePath() );
+                }
             }
 
             life.shutdown();
@@ -364,7 +410,7 @@ public class ImportTool
         printInputFiles( "Relationships", relationshipsFiles );
         System.out.println();
         System.out.println( "Available memory:" );
-        printIndented( "Free machine memory: " + bytes( RUNTIME.availableOffHeapMemory() ) );
+        printIndented( "Free machine memory: " + bytes( OsBeanUtil.getFreePhysicalMemory() ) );
         printIndented( "Max heap memory : " + bytes( Runtime.getRuntime().maxMemory() ) );
         System.out.println();
     }
@@ -436,10 +482,8 @@ public class ImportTool
 
     private static String manualReference( ManualPage page, Anchor anchor )
     {
-        return " http://neo4j.com/docs/" + Version.getKernel().getVersion() + "/" + page.getReference( anchor );
+        return " http://neo4j.com/docs/" + Version.getKernel().getReleaseVersion() + "/" + page.getReference( anchor );
     }
-
-
 
     /**
      * Method name looks strange, but look at how it's used and you'll see why it's named like that.
@@ -447,31 +491,34 @@ public class ImportTool
      */
     private static RuntimeException andPrintError( String typeOfError, Exception e, boolean stackTrace )
     {
+        // List of common errors that can be explained to the user
         if ( DuplicateInputIdException.class.equals( e.getClass() ) )
         {
-            System.err.println( "Duplicate input ids that would otherwise clash can be put into separate id space, " +
-                    "read more about how to use id spaces in the manual:" +
-                    manualReference( ManualPage.IMPORT_TOOL_FORMAT, Anchor.ID_SPACES ) );
+            printErrorMessage( "Duplicate input ids that would otherwise clash can be put into separate id space, " +
+                               "read more about how to use id spaces in the manual:" +
+                               manualReference( ManualPage.IMPORT_TOOL_FORMAT, Anchor.ID_SPACES ), e, stackTrace );
         }
         else if ( MissingRelationshipDataException.class.equals( e.getClass() ) )
         {
-            System.err.println( String.format( "Relationship missing mandatory field '%s', " +
-                                               "read more about relationship format in the manual: %s",
-                    ((MissingRelationshipDataException) e).getFieldType(),
-                    manualReference( ManualPage.IMPORT_TOOL_FORMAT, Anchor.RELATIONSHIP) ) );
+            printErrorMessage( "Relationship missing mandatory field '" +
+                               ((MissingRelationshipDataException) e).getFieldType() + "', read more about " +
+                               "relationship format in the manual: " +
+                               manualReference( ManualPage.IMPORT_TOOL_FORMAT, Anchor.RELATIONSHIP ), e, stackTrace );
         }
-        else if ( IllegalMultilineFieldException.class.equals( e.getClass() ) )
+        // This type of exception is wrapped since our input code throws InputException consistently,
+        // and so IllegalMultilineFieldException comes from the csv component, which has no access to InputException
+        // therefore it's wrapped.
+        else if ( Exceptions.contains( e, IllegalMultilineFieldException.class ) )
         {
-            System.err.println( String.format("Detected field which spanned multiple lines for an import where " +
-                                   "%s=false. If you know that your input data include " +
-                                   "fields containing new-line characters then import with this option set to true.",
-                    Options.MULTILINE_FIELDS.argument() ) );
+            printErrorMessage( "Detected field which spanned multiple lines for an import where " +
+                               Options.MULTILINE_FIELDS.argument() + "=false. If you know that your input data " +
+                               "include fields containing new-line characters then import with this option set to " +
+                               "true.", e, stackTrace );
         }
-
-        System.err.println( typeOfError + ": " + e.getMessage() );
-        if ( stackTrace )
+        // Fallback to printing generic error and stack trace
+        else
         {
-            e.printStackTrace( System.err );
+            printErrorMessage( typeOfError + ": " + e.getMessage(), e, true );
         }
         System.err.println();
 
@@ -487,6 +534,16 @@ public class ImportTool
             }
         } );
         return launderedException( e ); // throw in order to have process exit with !0
+    }
+
+    private static void printErrorMessage( String string, Exception e, boolean stackTrace )
+    {
+        System.err.println( string );
+        System.err.println( "Caused by:" + e.getMessage() );
+        if ( stackTrace )
+        {
+            e.printStackTrace( System.err );
+        }
     }
 
     private static Iterable<DataFactory<InputRelationship>>
@@ -522,9 +579,10 @@ public class ImportTool
     {
         out.println( "Neo4j Import Tool" );
         for ( String line : Args.splitLongLine( "neo4j-import is used to create a new Neo4j database "
-                + "from data in CSV files. "
-                + "See the chapter \"Import Tool\" in the Neo4j Manual for details on the CSV file format "
-                + "- a special kind of header is required.", 80 ) )
+                                                + "from data in CSV files. "
+                                                +
+                                                "See the chapter \"Import Tool\" in the Neo4j Manual for details on the CSV file format "
+                                                + "- a special kind of header is required.", 80 ) )
         {
             out.println( "\t" + line );
         }
@@ -533,6 +591,13 @@ public class ImportTool
         {
             option.printUsage( out );
         }
+
+        out.println( "Example:");
+        out.print( Strings.joinAsLines(
+                TAB + "bin/neo4j-import --into retail.db --id-type string --nodes:Customer customers.csv ",
+                TAB + "--nodes products.csv --nodes orders_header.csv,orders1.csv,orders2.csv ",
+                TAB + "--relationships:CONTAINS order_details.csv ",
+                TAB + "--relationships:ORDERED customer_orders_header.csv,orders1.csv,orders2.csv" ) );
     }
 
     private static boolean asksForUsage( Args args )
@@ -569,7 +634,8 @@ public class ImportTool
                 args.interpretOption( Options.ARRAY_DELIMITER.key(), Converters.<Character>optional(), DELIMITER_CONVERTER );
         final Character specificQuote =
                 args.interpretOption( Options.QUOTE.key(), Converters.<Character>optional(), Converters.toCharacter() );
-        final boolean multiLineFields = args.getBoolean( Options.MULTILINE_FIELDS.key(), false );
+        final Boolean multiLineFields = args.getBoolean( Options.MULTILINE_FIELDS.key(), null );
+        final Boolean emptyStringsAsNull = args.getBoolean( Options.IGNORE_EMPTY_STRINGS.key(), null );
         return new Configuration.Default()
         {
             @Override
@@ -599,7 +665,17 @@ public class ImportTool
             @Override
             public boolean multilineFields()
             {
-                return multiLineFields;
+                return multiLineFields != null
+                        ? multiLineFields.booleanValue()
+                        : defaultConfiguration.multilineFields();
+            }
+
+            @Override
+            public boolean emptyQuotedStringsAsNull()
+            {
+                return emptyStringsAsNull != null
+                        ? emptyStringsAsNull.booleanValue()
+                        : defaultConfiguration.emptyQuotedStringsAsNull();
             }
 
             @Override
@@ -671,16 +747,16 @@ public class ImportTool
 
     private enum ManualPage
     {
-        IMPORT_TOOL_FORMAT("import-tool-header-format.html");
+        IMPORT_TOOL_FORMAT( "import-tool-header-format.html" );
 
-        private String page;
+        private final String page;
 
         ManualPage( String page )
         {
             this.page = page;
         }
 
-        public String getReference(Anchor anchor)
+        public String getReference( Anchor anchor )
         {
             return page + "#" + anchor.anchor;
         }
@@ -688,15 +764,14 @@ public class ImportTool
 
     private enum Anchor
     {
-        ID_SPACES("import-tool-id-spaces"),
-        RELATIONSHIP("import-tool-header-format-rels");
+        ID_SPACES( "import-tool-id-spaces" ),
+        RELATIONSHIP( "import-tool-header-format-rels" );
 
-        private String anchor;
+        private final String anchor;
 
         Anchor( String anchor )
         {
             this.anchor = anchor;
         }
     }
-
 }

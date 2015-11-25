@@ -23,13 +23,13 @@
   <parent>
     <groupId>org.neo4j</groupId>
     <artifactId>parent</artifactId>
-    <version>2.3-SNAPSHOT</version>
+    <version>2.3.2-SNAPSHOT</version>
     <relativePath>../..</relativePath>
   </parent>
 
   <modelVersion>4.0.0</modelVersion>
   <artifactId>neo4j-kernel</artifactId>
-  <version>2.3-SNAPSHOT</version>
+  <version>2.3.2-SNAPSHOT</version>
 
   <name>Neo4j - Graph Database Kernel</name>
   <description>
@@ -101,7 +101,7 @@ the relevant Commercial Agreement.
       <plugin>
         <artifactId>maven-failsafe-plugin</artifactId>
         <configuration>
-          <argLine>-Xmx300m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=target/test-data</argLine>
+          <argLine>-Xmx300m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=target/test-data -Dorg.neo4j.unsafe.impl.internal.dragons.UnsafeUtil.DIRTY_MEMORY=true</argLine>
         </configuration>
       </plugin>
       <plugin>
@@ -131,6 +131,8 @@ the relevant Commercial Agreement.
         <artifactId>git-commit-id-plugin</artifactId>
         <configuration>
           <dotGitDirectory>${git.directory}</dotGitDirectory>
+          <failOnNoGitDirectory>false</failOnNoGitDirectory>
+          <useNativeGit>true</useNativeGit>
         </configuration>
       </plugin>
       <plugin>
@@ -328,29 +330,12 @@ the relevant Commercial Agreement.
     </dependency>
     <dependency>
       <groupId>org.neo4j</groupId>
-      <artifactId>neo4j-primitive-collections</artifactId>
-      <version>${project.version}</version>
-      <type>test-jar</type>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.neo4j</groupId>
       <artifactId>neo4j-logging</artifactId>
       <version>${project.version}</version>
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
 
-    <dependency>
-      <groupId>com.google.code.gson</groupId>
-      <artifactId>gson</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.powermock</groupId>
-      <artifactId>powermock-module-junit4</artifactId>
-      <scope>test</scope>
-    </dependency>
     <dependency>
       <groupId>org.powermock</groupId>
       <artifactId>powermock-api-mockito</artifactId>
@@ -360,16 +345,6 @@ the relevant Commercial Agreement.
     <dependency>
       <groupId>geronimo-spec</groupId>
       <artifactId>geronimo-spec-j2ee</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>commons-codec</groupId>
-      <artifactId>commons-codec</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.commons</groupId>
-      <artifactId>commons-lang3</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>

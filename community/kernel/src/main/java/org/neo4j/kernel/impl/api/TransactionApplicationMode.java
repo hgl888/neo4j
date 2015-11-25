@@ -44,12 +44,12 @@ public enum TransactionApplicationMode
             ),
 
     /**
-     * Transaction that is recovered, where commands are read, much like {@link #external}, but should
+     * Transaction that is recovered, where commands are read, much like {@link #EXTERNAL}, but should
      * be applied differently where extra care should be taken to ensure idempotency. This is because
      * a recovered transaction may have already been applied previously to the store.
      */
     RECOVERY(
-            false, // id tracking not needed since recovery rebuilds id generators anyway
+            false, // id tracking not needed because id generators will be rebuilt after recovery anyway
             false, // during recovery there's not really a cache to invalidate so don't bother
             true   // extra care needs to be taken to ensure idempotency since this transaction
                     // may have been applied previously
@@ -59,7 +59,7 @@ public enum TransactionApplicationMode
     private final boolean needsCacheInvalidation;
     private final boolean needsIdempotencyChecks;
 
-    private TransactionApplicationMode( boolean needsIdTracking, boolean needsCacheInvalidation,
+    TransactionApplicationMode( boolean needsIdTracking, boolean needsCacheInvalidation,
             boolean ensureIdempotency )
     {
         this.needsIdTracking = needsIdTracking;

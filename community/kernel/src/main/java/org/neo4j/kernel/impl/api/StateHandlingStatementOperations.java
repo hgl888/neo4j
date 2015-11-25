@@ -26,6 +26,7 @@ import java.util.Map;
 import org.neo4j.collection.primitive.PrimitiveIntCollection;
 import org.neo4j.collection.primitive.PrimitiveIntIterator;
 import org.neo4j.collection.primitive.PrimitiveIntStack;
+import org.neo4j.collection.primitive.PrimitiveLongCollections;
 import org.neo4j.collection.primitive.PrimitiveLongIterator;
 import org.neo4j.cursor.Cursor;
 import org.neo4j.function.Predicate;
@@ -33,11 +34,11 @@ import org.neo4j.kernel.api.EntityType;
 import org.neo4j.kernel.api.LegacyIndex;
 import org.neo4j.kernel.api.LegacyIndexHits;
 import org.neo4j.kernel.api.Statement;
-import org.neo4j.kernel.api.constraints.NodePropertyExistenceConstraint;
-import org.neo4j.kernel.api.constraints.RelationshipPropertyExistenceConstraint;
 import org.neo4j.kernel.api.constraints.NodePropertyConstraint;
+import org.neo4j.kernel.api.constraints.NodePropertyExistenceConstraint;
 import org.neo4j.kernel.api.constraints.PropertyConstraint;
 import org.neo4j.kernel.api.constraints.RelationshipPropertyConstraint;
+import org.neo4j.kernel.api.constraints.RelationshipPropertyExistenceConstraint;
 import org.neo4j.kernel.api.constraints.UniquenessConstraint;
 import org.neo4j.kernel.api.cursor.LabelItem;
 import org.neo4j.kernel.api.cursor.NodeItem;
@@ -45,6 +46,7 @@ import org.neo4j.kernel.api.cursor.PropertyItem;
 import org.neo4j.kernel.api.cursor.RelationshipItem;
 import org.neo4j.kernel.api.exceptions.EntityNotFoundException;
 import org.neo4j.kernel.api.exceptions.LabelNotFoundKernelException;
+import org.neo4j.kernel.api.exceptions.ProcedureException;
 import org.neo4j.kernel.api.exceptions.PropertyKeyIdNotFoundKernelException;
 import org.neo4j.kernel.api.exceptions.RelationshipTypeIdNotFoundKernelException;
 import org.neo4j.kernel.api.exceptions.TransactionFailureException;
@@ -57,10 +59,14 @@ import org.neo4j.kernel.api.exceptions.schema.DropConstraintFailureException;
 import org.neo4j.kernel.api.exceptions.schema.DropIndexFailureException;
 import org.neo4j.kernel.api.exceptions.schema.IllegalTokenNameException;
 import org.neo4j.kernel.api.exceptions.schema.IndexBrokenKernelException;
+import org.neo4j.kernel.api.exceptions.schema.ProcedureConstraintViolation;
 import org.neo4j.kernel.api.exceptions.schema.SchemaRuleNotFoundException;
 import org.neo4j.kernel.api.exceptions.schema.TooManyLabelsException;
 import org.neo4j.kernel.api.index.IndexDescriptor;
 import org.neo4j.kernel.api.index.InternalIndexState;
+import org.neo4j.kernel.api.procedures.ProcedureDescriptor;
+import org.neo4j.kernel.api.procedures.ProcedureSignature;
+import org.neo4j.kernel.api.procedures.ProcedureSignature.ProcedureName;
 import org.neo4j.kernel.api.properties.DefinedProperty;
 import org.neo4j.kernel.api.properties.Property;
 import org.neo4j.kernel.api.properties.PropertyKeyIdIterator;
@@ -82,6 +88,7 @@ import org.neo4j.kernel.impl.core.Token;
 import org.neo4j.kernel.impl.index.IndexEntityType;
 import org.neo4j.kernel.impl.index.LegacyIndexStore;
 import org.neo4j.kernel.impl.store.SchemaStorage;
+import org.neo4j.kernel.impl.util.Cursors;
 import org.neo4j.kernel.impl.util.PrimitiveLongResourceIterator;
 import org.neo4j.kernel.impl.util.diffsets.ReadableDiffSets;
 
@@ -91,6 +98,7 @@ import static org.neo4j.helpers.collection.IteratorUtil.iterator;
 import static org.neo4j.helpers.collection.IteratorUtil.resourceIterator;
 import static org.neo4j.helpers.collection.IteratorUtil.singleOrNull;
 import static org.neo4j.kernel.api.StatementConstants.NO_SUCH_NODE;
+import static org.neo4j.kernel.impl.api.PropertyValueComparison.COMPARE_NUMBERS;
 
 public class StateHandlingStatementOperations implements
         KeyReadOperations,
@@ -267,9 +275,10 @@ public class StateHandlingStatementOperations implements
 
     {
         // TODO Filter this properly
-        return statement.getStoreStatement().acquireIteratorNodeCursor(
-                storeLayer.nodesGetFromIndexRangeSeekByNumber( statement, index, lower, includeLower, upper,
-                        includeUpper ) );
+        return COMPARE_NUMBERS.isEmptyRange( lower, includeLower, upper, includeUpper ) ? Cursors.<NodeItem>empty() :
+               statement.getStoreStatement().acquireIteratorNodeCursor(
+                       storeLayer.nodesGetFromInclusiveNumericIndexRangeSeek( statement, index, lower, upper
+                       ) );
     }
 
     @Override
@@ -372,14 +381,16 @@ public class StateHandlingStatementOperations implements
     @Override
     public PrimitiveLongIterator nodesGetAll( KernelStatement state )
     {
-        return state.txState().augmentNodesGetAll( storeLayer.nodesGetAll() );
+        PrimitiveLongIterator iterator = storeLayer.nodesGetAll();
+        return state.hasTxStateWithChanges() ? state.txState().augmentNodesGetAll( iterator ) : iterator;
     }
 
     @Override
 
     public RelationshipIterator relationshipsGetAll( KernelStatement state )
     {
-        return state.txState().augmentRelationshipsGetAll( storeLayer.relationshipsGetAll() );
+        RelationshipIterator iterator = storeLayer.relationshipsGetAll();
+        return state.hasTxStateWithChanges() ? state.txState().augmentRelationshipsGetAll( iterator ) : iterator;
     }
 
     @Override
@@ -493,7 +504,8 @@ public class StateHandlingStatementOperations implements
         try
         {
             IndexDescriptor index = new IndexDescriptor( labelId, propertyKeyId );
-            if ( state.txState().constraintIndexDoUnRemove( index ) ) // ..., DROP, *CREATE*
+            if ( state.hasTxStateWithChanges() &&
+                 state.txState().constraintIndexDoUnRemove( index ) ) // ..., DROP, *CREATE*
             { // creation is undoing a drop
                 if ( !state.txState().constraintDoUnRemove( constraint ) ) // CREATE, ..., DROP, *CREATE*
                 { // ... the drop we are undoing did itself undo a prior create...
@@ -617,6 +629,41 @@ public class StateHandlingStatementOperations implements
             throws DropConstraintFailureException
     {
         state.txState().constraintDoDrop( constraint );
+    }
+
+    @Override
+    public void procedureCreate( KernelStatement state, ProcedureSignature signature, String language, String code )
+    {
+        state.txState().procedureDoCreate( signature, language, code );
+    }
+
+    @Override
+    public void procedureDrop( KernelStatement statement, ProcedureName name ) throws ProcedureException, ProcedureConstraintViolation
+    {
+        statement.txState().procedureDoDrop( procedureGet( statement, name ) );
+    }
+
+    @Override
+    public Iterator<ProcedureDescriptor> proceduresGetAll( KernelStatement statement )
+    {
+        Iterator<ProcedureDescriptor> procs = storeLayer.proceduresGetAll();
+        return statement.hasTxStateWithChanges() ? statement.txState().augmentProcedures( procs ) : procs;
+    }
+
+    @Override
+    public ProcedureDescriptor procedureGet( KernelStatement statement, ProcedureName name )
+            throws ProcedureException
+    {
+        if(statement.hasTxStateWithChanges())
+        {
+            TransactionState state = statement.txState();
+            ProcedureDescriptor procedure = state.getProcedure( name );
+            if( procedure != null )
+            {
+                return procedure;
+            }
+        }
+        return storeLayer.procedureGet( name );
     }
 
     @Override
@@ -761,10 +808,13 @@ public class StateHandlingStatementOperations implements
             Number upper, boolean includeUpper ) throws IndexNotFoundKernelException
 
     {
-        PrimitiveLongIterator committed = storeLayer.nodesGetFromIndexRangeSeekByNumber( state, index, lower,
-                includeLower, upper, includeUpper );
+        PrimitiveLongIterator committed = COMPARE_NUMBERS.isEmptyRange( lower, includeLower, upper, includeUpper )
+                ? PrimitiveLongCollections.emptyIterator()
+                : storeLayer.nodesGetFromInclusiveNumericIndexRangeSeek( state, index, lower, upper );
+        PrimitiveLongIterator exactMatches = filterExactRangeMatches( state, index, committed, lower, includeLower,
+                upper, includeUpper );
         return filterIndexStateChangesForRangeSeekByNumber( state, index, lower, includeLower, upper, includeUpper,
-                committed );
+                exactMatches );
     }
 
     @Override
@@ -799,6 +849,13 @@ public class StateHandlingStatementOperations implements
             Object value, PrimitiveLongIterator committed )
     {
         return LookupFilter.exactIndexMatches( this, state, committed, index.getPropertyKeyId(), value );
+    }
+
+    private PrimitiveLongIterator filterExactRangeMatches( final KernelStatement state, IndexDescriptor index,
+            PrimitiveLongIterator committed, Number lower, boolean includeLower, Number upper, boolean includeUpper )
+    {
+        return LookupFilter.exactRangeMatches( this, state, committed, index.getPropertyKeyId(), lower, includeLower,
+                upper, includeUpper );
     }
 
     private PrimitiveLongIterator filterIndexStateChangesForScanOrSeek( KernelStatement state, IndexDescriptor index,

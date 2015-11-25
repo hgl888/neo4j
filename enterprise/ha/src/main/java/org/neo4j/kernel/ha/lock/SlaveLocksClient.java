@@ -25,7 +25,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.neo4j.com.RequestContext;
 import org.neo4j.com.Response;
+import org.neo4j.graphdb.TransientDatabaseFailureException;
 import org.neo4j.kernel.AvailabilityGuard;
+import org.neo4j.kernel.AvailabilityGuard.UnavailableException;
 import org.neo4j.kernel.DeadlockDetectedException;
 import org.neo4j.kernel.api.exceptions.TransactionFailureException;
 import org.neo4j.kernel.ha.com.RequestContextFactory;
@@ -41,7 +43,7 @@ import static org.neo4j.kernel.impl.locking.LockType.WRITE;
 /**
  * The slave locks client is responsible for managing locks on behalf of some actor on a slave machine. An actor
  * could be a transaction or some other job that runs in the database.
- *
+ * <p/>
  * The client maintains a local "real" lock client, backed by some regular Locks implementation, but it also coordinates
  * with the master for certain types of locks. If you grab a lock on a node, for instance, this class will grab a
  * cluster-global lock by talking to the master machine, and then grab that same lock locally before returning.
@@ -53,7 +55,6 @@ class SlaveLocksClient implements Locks.Client
     private final Locks localLockManager;
     private final RequestContextFactory requestContextFactory;
     private final AvailabilityGuard availabilityGuard;
-    private final SlaveLockManager.Configuration config;
 
     // Using atomic ints to avoid creating garbage through boxing.
     private final Map<Locks.ResourceType, Map<Long, AtomicInteger>> sharedLocks;
@@ -65,15 +66,13 @@ class SlaveLocksClient implements Locks.Client
             Locks.Client local,
             Locks localLockManager,
             RequestContextFactory requestContextFactory,
-            AvailabilityGuard availabilityGuard,
-            SlaveLockManager.Configuration config )
+            AvailabilityGuard availabilityGuard )
     {
         this.master = master;
         this.client = local;
         this.localLockManager = localLockManager;
         this.requestContextFactory = requestContextFactory;
         this.availabilityGuard = availabilityGuard;
-        this.config = config;
         sharedLocks = new HashMap<>();
         exclusiveLocks = new HashMap<>();
     }
@@ -96,7 +95,7 @@ class SlaveLocksClient implements Locks.Client
     {
         Map<Long, AtomicInteger> lockMap = getLockMap( sharedLocks, resourceType );
         AtomicInteger preExistingLock = lockMap.get( resourceId );
-        if( preExistingLock != null )
+        if ( preExistingLock != null )
         {
             // We already hold this lock, just increment the local reference count
             preExistingLock.incrementAndGet();
@@ -122,7 +121,7 @@ class SlaveLocksClient implements Locks.Client
         Map<Long, AtomicInteger> lockMap = getLockMap( exclusiveLocks, resourceType );
 
         AtomicInteger preExistingLock = lockMap.get( resourceId );
-        if( preExistingLock != null )
+        if ( preExistingLock != null )
         {
             // We already hold this lock, just increment the local reference count
             preExistingLock.incrementAndGet();
@@ -157,12 +156,12 @@ class SlaveLocksClient implements Locks.Client
     {
         Map<Long, AtomicInteger> lockMap = getLockMap( sharedLocks, resourceType );
         AtomicInteger counter = lockMap.get( resourceId );
-        if(counter == null)
+        if ( counter == null )
         {
             throw new IllegalStateException( this + " cannot release lock it does not hold: EXCLUSIVE " +
                     resourceType + "[" + resourceId + "]" );
         }
-        if(counter.decrementAndGet() == 0)
+        if ( counter.decrementAndGet() == 0 )
         {
             lockMap.remove( resourceId );
             client.releaseShared( resourceType, resourceId );
@@ -174,12 +173,12 @@ class SlaveLocksClient implements Locks.Client
     {
         Map<Long, AtomicInteger> lockMap = getLockMap( exclusiveLocks, resourceType );
         AtomicInteger counter = lockMap.get( resourceId );
-        if(counter == null)
+        if ( counter == null )
         {
             throw new IllegalStateException( this + " cannot release lock it does not hold: EXCLUSIVE " +
                     resourceType + "[" + resourceId + "]" );
         }
-        if(counter.decrementAndGet() == 0)
+        if ( counter.decrementAndGet() == 0 )
         {
             lockMap.remove( resourceId );
             client.releaseExclusive( resourceType, resourceId );
@@ -191,6 +190,7 @@ class SlaveLocksClient implements Locks.Client
     {
         sharedLocks.clear();
         exclusiveLocks.clear();
+        client.releaseAll();
         if ( initialized )
         {
             try ( Response<Void> ignored = master.endLockSession( newRequestContextFor( client ), true ) )
@@ -199,21 +199,18 @@ class SlaveLocksClient implements Locks.Client
             }
             initialized = false;
         }
-        client.releaseAll();
+    }
+
+    @Override
+    public void stop()
+    {
+        throw new UnsupportedOperationException( "Lock client stop is unsupported on slave side." );
     }
 
     @Override
     public void close()
     {
-        sharedLocks.clear();
-        exclusiveLocks.clear();
-        if ( initialized )
-        {
-            try ( Response<Void> ignored = master.endLockSession( newRequestContextFor( client ), true ) )
-            {
-                // Lock session is closed on master at this point
-            }
-        }
+        releaseAll();
         client.close();
     }
 
@@ -226,9 +223,9 @@ class SlaveLocksClient implements Locks.Client
     private boolean getReadLockOnMaster( Locks.ResourceType resourceType, long resourceId )
     {
         if ( resourceType == ResourceTypes.NODE
-            || resourceType == ResourceTypes.RELATIONSHIP
-            || resourceType == ResourceTypes.GRAPH_PROPS
-            || resourceType == ResourceTypes.LEGACY_INDEX )
+                || resourceType == ResourceTypes.RELATIONSHIP
+                || resourceType == ResourceTypes.GRAPH_PROPS
+                || resourceType == ResourceTypes.LEGACY_INDEX )
         {
             makeSureTxHasBeenInitialized();
 
@@ -277,12 +274,13 @@ class SlaveLocksClient implements Locks.Client
     {
         try
         {
-            availabilityGuard.await( config.getAvailabilityTimeout() );
+            availabilityGuard.checkAvailable();
         }
-        catch ( AvailabilityGuard.UnavailableException e )
+        catch ( UnavailableException e )
         {
-            throw new RuntimeException( e.getMessage() );
+            throw new TransientDatabaseFailureException( "Database not available", e );
         }
+
         if ( !initialized )
         {
             try ( Response<Void> ignored = master.newLockSession( newRequestContextFor( client ) ) )
@@ -293,7 +291,8 @@ class SlaveLocksClient implements Locks.Client
             {
                 // Temporary wrapping, we should review the exception structure of the Locks API to allow this to
                 // not use runtime exceptions here.
-                throw new org.neo4j.graphdb.TransactionFailureException( "Failed to acquire lock in cluster: " + e.getMessage(), e );
+                throw new org.neo4j.graphdb.TransactionFailureException( "Failed to acquire lock in cluster: " +
+                        e.getMessage(), e );
             }
             initialized = true;
         }
@@ -306,7 +305,8 @@ class SlaveLocksClient implements Locks.Client
 
     private UnsupportedOperationException newUnsupportedDirectTryLockUsageException()
     {
-        return new UnsupportedOperationException( "At the time of adding \"try lock\" semantics there was no usage of " +
+        return new UnsupportedOperationException( "At the time of adding \"try lock\" semantics there was no usage of" +
+                " " +
                 getClass().getSimpleName() + " calling it directly. It was designed to be called on a local " +
                 LockManager.class.getSimpleName() + " delegated to from within the waiting version" );
     }

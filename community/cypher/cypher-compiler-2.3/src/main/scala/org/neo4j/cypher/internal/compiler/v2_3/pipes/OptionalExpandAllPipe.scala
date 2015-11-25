@@ -19,14 +19,16 @@
  */
 package org.neo4j.cypher.internal.compiler.v2_3.pipes
 
+import org.neo4j.cypher.internal.compiler.v2_3.ExecutionContext
 import org.neo4j.cypher.internal.compiler.v2_3.commands.predicates.Predicate
-import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{Effects, ReadsNodes, ReadsRelationships}
+import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{ReadsAllNodes, Effects, ReadsRelationships}
 import org.neo4j.cypher.internal.compiler.v2_3.planDescription.InternalPlanDescription.Arguments.ExpandExpression
-import org.neo4j.cypher.internal.compiler.v2_3.symbols._
-import org.neo4j.cypher.internal.compiler.v2_3.{ExecutionContext, InternalException}
-import org.neo4j.graphdb.{Direction, Node}
+import org.neo4j.cypher.internal.frontend.v2_3.{SemanticDirection, InternalException}
+import org.neo4j.cypher.internal.frontend.v2_3.symbols._
+import org.neo4j.graphdb.Node
 
-case class OptionalExpandAllPipe(source: Pipe, fromName: String, relName: String, toName: String, dir: Direction, types: LazyTypes, predicate: Predicate)
+case class OptionalExpandAllPipe(source: Pipe, fromName: String, relName: String, toName: String, dir: SemanticDirection,
+                                 types: LazyTypes, predicate: Predicate)
                                 (val estimatedCardinality: Option[Double] = None)(implicit pipeMonitor: PipeMonitor)
   extends PipeWithSource(source, pipeMonitor) with RonjaPipe {
 
@@ -78,7 +80,7 @@ case class OptionalExpandAllPipe(source: Pipe, fromName: String, relName: String
     copy(source = head)(estimatedCardinality)
   }
 
-  override def localEffects = predicate.effects(symbols) | Effects(ReadsNodes, ReadsRelationships)
+  override def localEffects = predicate.effects(symbols) | Effects(ReadsAllNodes, ReadsRelationships)
 
   def withEstimatedCardinality(estimated: Double) = copy()(Some(estimated))
 }

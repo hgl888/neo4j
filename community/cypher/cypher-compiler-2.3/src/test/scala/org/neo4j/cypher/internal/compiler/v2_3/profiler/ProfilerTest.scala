@@ -21,13 +21,13 @@ package org.neo4j.cypher.internal.compiler.v2_3.profiler
 
 import org.neo4j.cypher.internal.compiler.v2_3._
 import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions.{NestedPipeExpression, ProjectedPath}
-import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{Effects, WritesNodes}
+import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{WritesAnyNode, Effects, WritesNodes}
 import org.neo4j.cypher.internal.compiler.v2_3.pipes._
 import org.neo4j.cypher.internal.compiler.v2_3.planDescription.InternalPlanDescription.Arguments.{DbHits, Rows}
 import org.neo4j.cypher.internal.compiler.v2_3.planDescription.{Argument, InternalPlanDescription}
 import org.neo4j.cypher.internal.compiler.v2_3.spi.QueryContext
 import org.neo4j.cypher.internal.compiler.v2_3.symbols.SymbolTable
-import org.neo4j.cypher.internal.compiler.v2_3.test_helpers.CypherFunSuite
+import org.neo4j.cypher.internal.frontend.v2_3.test_helpers.CypherFunSuite
 
 import scala.collection.immutable.::
 
@@ -207,7 +207,7 @@ case class ProfilerTestPipe(source: Pipe, name: String, rows: Int, dbAccess: Int
     (0 until rows).map(x => ExecutionContext.empty).toIterator
   }
 
-  def localEffects: Effects = Effects(WritesNodes)
+  def localEffects: Effects = Effects(WritesAnyNode)
 
   def symbols: SymbolTable = SymbolTable()
 

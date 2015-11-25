@@ -20,7 +20,7 @@
 package org.neo4j.cypher
 
 import org.neo4j.cypher.internal.compiler.v2_3.spi.PlanContext
-import org.neo4j.cypher.internal.compiler.v2_3.test_helpers.{CypherFunSuite, CypherTestSupport}
+import org.neo4j.cypher.internal.frontend.v2_3.test_helpers.{CypherFunSuite, CypherTestSupport}
 import org.neo4j.cypher.internal.helpers.GraphIcing
 import org.neo4j.cypher.internal.spi.v2_3.TransactionBoundPlanContext
 import org.neo4j.graphdb._
@@ -44,8 +44,12 @@ trait GraphDatabaseTestSupport extends CypherTestSupport with GraphIcing {
 
   override protected def initTest() {
     super.initTest()
+    graph = createGraphDatabase()
+  }
+
+  protected def createGraphDatabase(): GraphDatabaseAPI with Snitch = {
     val config: Map[String, String] = databaseConfig() + (GraphDatabaseSettings.pagecache_memory.name -> "8M")
-    graph = new ImpermanentGraphDatabase(config.asJava) with Snitch
+    new ImpermanentGraphDatabase(config.asJava) with Snitch
   }
 
   override protected def stopTest() {

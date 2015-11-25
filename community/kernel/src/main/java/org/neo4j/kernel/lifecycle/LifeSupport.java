@@ -39,9 +39,9 @@ import org.neo4j.logging.Logger;
 public class LifeSupport
         implements Lifecycle
 {
-    private volatile List<LifecycleInstance> instances = new ArrayList<LifecycleInstance>();
+    private volatile List<LifecycleInstance> instances = new ArrayList<>();
     private volatile LifecycleStatus status = LifecycleStatus.NONE;
-    private final List<LifecycleListener> listeners = new ArrayList<LifecycleListener>();
+    private final List<LifecycleListener> listeners = new ArrayList<>();
     
     public LifeSupport()
     {
@@ -68,15 +68,17 @@ public class LifeSupport
                 catch ( LifecycleException e )
                 {
                     status = changedStatus( this, status, LifecycleStatus.STOPPED );
+
                     try
                     {
                         shutdown();
-                        throw e;
                     }
                     catch ( LifecycleException shutdownErr )
                     {
-                        throw Exceptions.withSuppressed( e, shutdownErr.getCause() == null ? shutdownErr : shutdownErr.getCause() );
+                        e.addSuppressed( shutdownErr );
                     }
+
+                    throw e;
                 }
             }
             status = changedStatus( this, status, LifecycleStatus.STOPPED );
@@ -115,12 +117,14 @@ public class LifeSupport
                     try
                     {
                         stop();
-                        throw e;
+
                     }
                     catch ( LifecycleException stopErr )
                     {
-                        throw Exceptions.withSuppressed( e, stopErr.getCause() == null ? stopErr : stopErr.getCause() );
+                        e.addSuppressed( stopErr );
                     }
+
+                    throw e;
                 }
             }
             status = changedStatus( this, status, LifecycleStatus.STARTED );
@@ -140,20 +144,7 @@ public class LifeSupport
         if ( status == LifecycleStatus.STARTED )
         {
             status = changedStatus( this, status, LifecycleStatus.STOPPING );
-            LifecycleException ex = null;
-            for ( int i = instances.size() - 1; i >= 0; i-- )
-            {
-                LifecycleInstance lifecycleInstance = instances.get( i );
-                try
-                {
-                    lifecycleInstance.stop();
-                }
-                catch ( LifecycleException e )
-                {
-                    ex = ex == null ? e : Exceptions.withSuppressed( ex, e );
-                }
-            }
-
+            LifecycleException ex = stopInstances(instances);
             status = changedStatus( this, status, LifecycleStatus.STOPPED );
 
             if ( ex != null )
@@ -161,6 +152,24 @@ public class LifeSupport
                 throw ex;
             }
         }
+    }
+
+    private LifecycleException stopInstances(List<LifecycleInstance> instances)
+    {
+        LifecycleException ex = null;
+        for ( int i = instances.size() - 1; i >= 0; i-- )
+        {
+            LifecycleInstance lifecycleInstance = instances.get( i );
+            try
+            {
+                lifecycleInstance.stop();
+            }
+            catch ( LifecycleException e )
+            {
+                ex = ex == null ? e : Exceptions.withSuppressed( ex, e );
+            }
+        }
+        return ex;
     }
 
     /**
@@ -209,117 +218,37 @@ public class LifeSupport
     }
 
     /**
-     * Restart an individual instance. All instances "after" the instance will be stopped first,
-     * so that they don't try to use it during the restart. A restart is effectively a stop followed
-     * by a start.
-     *
-     * @throws LifecycleException       if any start or stop fails
-     * @throws IllegalArgumentException if instance is not registered
-     */
-    public synchronized void restart( Lifecycle instance )
-            throws LifecycleException, IllegalArgumentException
-    {
-        if ( status == LifecycleStatus.STARTED )
-        {
-            boolean foundRestartingInstance = false;
-            List<LifecycleInstance> restartingInstances = new ArrayList<LifecycleInstance>();
-            for ( LifecycleInstance lifecycleInstance : instances )
-            {
-                if ( lifecycleInstance.instance == instance )
-                {
-                    foundRestartingInstance = true;
-                }
-
-                if ( foundRestartingInstance )
-                {
-                    restartingInstances.add( lifecycleInstance );
-                }
-            }
-
-            if ( !foundRestartingInstance )
-            {
-                throw new IllegalArgumentException( "Instance is not registered" );
-            }
-
-            // Stop instances
-            status = changedStatus( this, status, LifecycleStatus.STOPPING );
-            LifecycleException ex = null;
-            for ( int i = restartingInstances.size() - 1; i >= 0; i-- )
-            {
-                LifecycleInstance lifecycleInstance = restartingInstances.get( i );
-                try
-                {
-                    lifecycleInstance.stop();
-                }
-                catch ( LifecycleException e )
-                {
-                    ex = ex == null ? e : Exceptions.withSuppressed( ex, e );
-                }
-            }
-
-            // Failed stop - stop the whole thing to be safe
-            if ( ex != null )
-            {
-                status = changedStatus( this, status, LifecycleStatus.STARTED );
-                try
-                {
-                    stop();
-                    throw ex;
-                }
-                catch ( LifecycleException e )
-                {
-                    throw Exceptions.withSuppressed( ex, e );
-                }
-            }
-
-            // Start instances
-            try
-            {
-                for ( int i = 0; i < restartingInstances.size(); i++ )
-                {
-                    LifecycleInstance lifecycle = restartingInstances.get( i );
-                    lifecycle.start();
-                }
-                status = changedStatus( this, status, LifecycleStatus.STARTED );
-            }
-            catch ( LifecycleException e )
-            {
-                // Failed restart - stop the whole thing to be safe
-                status = changedStatus( this, status, LifecycleStatus.STARTED );
-                try
-                {
-                    stop();
-                }
-                catch ( LifecycleException e1 )
-                {
-                    throw Exceptions.withSuppressed( e, e1 );
-                }
-                throw e;
-            }
-        }
-    }
-
-    /**
      * Add a new Lifecycle instance. It will immediately be transitioned
      * to the state of this LifeSupport.
      *
      * @param instance the Lifecycle instance to add
-     * @param <T>      type of the instance
+     * @param <T> type of the instance
      * @return the instance itself
      * @throws LifecycleException if the instance could not be transitioned properly
      */
-    public synchronized <T> T add( T instance )
+    public synchronized <T extends Lifecycle> T add( T instance )
             throws LifecycleException
     {
-        if ( instance instanceof Lifecycle )
-        {
-            LifecycleInstance newInstance = new LifecycleInstance( (Lifecycle) instance );
-            List<LifecycleInstance> tmp = new ArrayList<>( instances );
-            tmp.add(newInstance);
-            instances = tmp;
-            bringToState( newInstance );
-        }
+        assert instance != null;
+        assert notAlreadyAdded( instance );
+        LifecycleInstance newInstance = new LifecycleInstance( instance );
+        List<LifecycleInstance> tmp = new ArrayList<>( instances );
+        tmp.add( newInstance );
+        instances = tmp;
+        bringToState( newInstance );
         return instance;
+    }
+
+    private boolean notAlreadyAdded( Lifecycle instance )
+    {
+        for ( LifecycleInstance candidate : instances )
+        {
+            if ( candidate.instance == instance )
+            {
+                throw new IllegalStateException( instance + " already added", candidate.addedWhere );
+            }
+        }
+        return true;
     }
 
     public synchronized boolean remove( Object instance )
@@ -469,10 +398,18 @@ public class LifeSupport
     {
         Lifecycle instance;
         LifecycleStatus currentStatus = LifecycleStatus.NONE;
+        Exception addedWhere;
 
         private LifecycleInstance( Lifecycle instance )
         {
             this.instance = instance;
+            assert trackInstantiationStackTrace();
+        }
+
+        private boolean trackInstantiationStackTrace()
+        {
+            addedWhere = new Exception();
+            return true;
         }
 
         @Override

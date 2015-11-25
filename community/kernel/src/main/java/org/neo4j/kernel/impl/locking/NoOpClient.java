@@ -24,13 +24,11 @@ public class NoOpClient implements Locks.Client
     @Override
     public void acquireShared( Locks.ResourceType resourceType, long resourceId ) throws AcquireLockTimeoutException
     {
-
     }
 
     @Override
     public void acquireExclusive( Locks.ResourceType resourceType, long resourceId ) throws AcquireLockTimeoutException
     {
-
     }
 
     @Override
@@ -48,17 +46,20 @@ public class NoOpClient implements Locks.Client
     @Override
     public void releaseShared( Locks.ResourceType resourceType, long resourceId )
     {
-
     }
 
     @Override
     public void releaseExclusive( Locks.ResourceType resourceType, long resourceId )
     {
-
     }
 
     @Override
     public void releaseAll()
+    {
+    }
+
+    @Override
+    public void stop()
     {
     }
 

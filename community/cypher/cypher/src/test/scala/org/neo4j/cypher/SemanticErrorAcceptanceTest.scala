@@ -20,7 +20,8 @@
 package org.neo4j.cypher
 
 import org.neo4j.graphdb.QueryExecutionException
-import collection.JavaConverters._
+
+import scala.collection.JavaConverters._
 
 class SemanticErrorAcceptanceTest extends ExecutionEngineFunSuite {
 
@@ -327,7 +328,7 @@ class SemanticErrorAcceptanceTest extends ExecutionEngineFunSuite {
       "match (n:Person)-->(m:Person) using index n:Person(name) where n.name = m.name return n",
       "Cannot use index hint in this context. Index hints are only supported for the following "+
         "predicates in WHERE (either directly or as part of a top-level AND): equality comparison, " +
-        "inequality (range) comparison, LIKE pattern matching, IN condition or checking property " +
+        "inequality (range) comparison, STARTS WITH, IN condition or checking property " +
         "existence. The comparison cannot be performed between two property values. Note that the " +
         "label and property comparison must be specified on a non-optional node (line 1, " +
         "column 31 (offset: 30))"
@@ -458,7 +459,7 @@ class SemanticErrorAcceptanceTest extends ExecutionEngineFunSuite {
   test("should reject unicode versions of hyphens") {
     executeAndEnsureError(
       "RETURN 42 — 41",
-      "Invalid input '—': expected whitespace, comment, '.', node labels, '[', \"=~\", IN, LIKE, NOT, ILIKE, IS, '^', '*', '/', '%', '+', '-', '<', '>', \"<=\", \">=\", '=', \"<>\", \"!=\", AND, XOR, OR, AS, ',', ORDER, SKIP, LIMIT, LOAD CSV, START, MATCH, UNWIND, MERGE, CREATE, SET, DELETE, REMOVE, FOREACH, WITH, RETURN, UNION, ';' or end of input (line 1, column 11 (offset: 10))")
+      """Invalid input '—': expected whitespace, comment, '.', node labels, '[', "=~", IN, STARTS, ENDS, CONTAINS, IS, '^', '*', '/', '%', '+', '-', '=', "<>", "!=", '<', '>', "<=", ">=", AND, XOR, OR, AS, ',', ORDER, SKIP, LIMIT, LOAD CSV, START, MATCH, UNWIND, MERGE, CREATE, SET, DELETE, REMOVE, FOREACH, WITH, RETURN, UNION, ';' or end of input (line 1, column 11 (offset: 10))""")
   }
 
   test("fail when parsing larger than 64 bit integers") {
@@ -526,8 +527,28 @@ class SemanticErrorAcceptanceTest extends ExecutionEngineFunSuite {
 
   }
 
+  test("not allowed to refer to identifiers in SKIP")(
+    executeAndEnsureError("MATCH n RETURN n SKIP n.count",
+                          "It is not allowed to refer to identifiers in SKIP (line 1, column 23 (offset: 22))")
+  )
+
+  test("only allowed to use positive integer literals in SKIP") (
+    executeAndEnsureError("MATCH n RETURN n SKIP -1",
+                          "Invalid input '-1' is not a valid value, must be a positive integer (line 1, column 23 (offset: 22))")
+  )
+
+  test("not allowed to refer to identifiers in LIMIT")(
+    executeAndEnsureError("MATCH n RETURN n LIMIT n.count",
+                          "It is not allowed to refer to identifiers in LIMIT (line 1, column 24 (offset: 23))")
+  )
+
+  test("only allowed to use positive integer literals in LIMIT") (
+    executeAndEnsureError("MATCH n RETURN n LIMIT 1.7",
+                          "Invalid input '1.7' is not a valid value, must be a positive integer (line 1, column 24 (offset: 23))")
+  )
+
   def executeAndEnsureError(query: String, expected: String) {
-    import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions.StringHelper._
+    import org.neo4j.cypher.internal.frontend.v2_3.helpers.StringHelper._
 
     val fixedExpected = expected.fixPosition
     try {

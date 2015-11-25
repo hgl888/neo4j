@@ -3,14 +3,14 @@
   <parent>
     <groupId>org.neo4j</groupId>
     <artifactId>parent</artifactId>
-    <version>2.3-SNAPSHOT</version>
+    <version>2.3.2-SNAPSHOT</version>
     <relativePath>..</relativePath>
   </parent>
 
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.neo4j.build</groupId>
   <artifactId>community-build</artifactId>
-  <version>2.3-SNAPSHOT</version>
+  <version>2.3.2-SNAPSHOT</version>
 
   <name>Neo4j - Community Build</name>
   <packaging>pom</packaging>
@@ -53,10 +53,10 @@
     <module>embedded-examples</module>
     <module>server-api</module>
     <module>graphviz</module>
-    <module>ndp</module>
     <module>server</module>
     <module>server-examples</module>
     <module>server-plugin-test</module>
+	<module>consistency-check-legacy</module>
     <module>consistency-check</module>
     <module>neo4j-harness</module>
     <module>licensecheck-config</module>
@@ -201,21 +201,6 @@ the relevant Commercial Agreement.
           <type>pom</type>
         </dependency>
         <dependency>
-          <groupId>org.neo4j.doc</groupId>
-          <artifactId>neo4j-cypher-docs</artifactId>
-          <version>${project.version}</version>
-        </dependency>
-        <dependency>
-          <groupId>org.neo4j.doc</groupId>
-          <artifactId>neo4j-cypher-refcard-tests</artifactId>
-          <version>${project.version}</version>
-        </dependency>
-        <dependency>
-          <groupId>org.neo4j.doc</groupId>
-          <artifactId>neo4j-graphgist</artifactId>
-          <version>${project.version}</version>
-        </dependency>
-        <dependency>
           <groupId>org.neo4j.test</groupId>
           <artifactId>neo4j-harness</artifactId>
           <version>${project.version}</version>
@@ -223,5 +208,4 @@ the relevant Commercial Agreement.
       </dependencies>
     </profile>
   </profiles>
-
 </project>

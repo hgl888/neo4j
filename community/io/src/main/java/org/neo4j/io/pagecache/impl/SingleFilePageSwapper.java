@@ -19,6 +19,7 @@
  */
 package org.neo4j.io.pagecache.impl;
 
+import org.apache.commons.lang3.SystemUtils;
 import sun.nio.ch.FileChannelImpl;
 
 import java.io.File;
@@ -33,7 +34,6 @@ import java.nio.channels.FileLock;
 import java.nio.channels.OverlappingFileLockException;
 
 import org.neo4j.io.fs.FileSystemAbstraction;
-import org.neo4j.io.fs.FileUtils;
 import org.neo4j.io.fs.StoreChannel;
 import org.neo4j.io.fs.StoreFileChannel;
 import org.neo4j.io.fs.StoreFileChannelUnwrapper;
@@ -81,7 +81,7 @@ public class SingleFilePageSwapper implements PageSwapper
             UnsafeUtil.getFieldOffset( SingleFilePageSwapper.class, "fileSize" );
 
     private static final ThreadLocal<ByteBuffer> proxyCache = new ThreadLocal<>();
-    private static final MethodHandle positionLockGetter = null;//getPositionLockGetter();
+    private static final MethodHandle positionLockGetter = getPositionLockGetter();
 
     private static MethodHandle getPositionLockGetter()
     {
@@ -190,7 +190,7 @@ public class SingleFilePageSwapper implements PageSwapper
 
     private void acquireLock() throws IOException
     {
-        if ( FileUtils.OS_IS_WINDOWS )
+        if ( SystemUtils.IS_OS_WINDOWS )
         {
             // We don't take file locks on the individual store files on Windows, because once you've taking
             // a file lock on a channel, you can only do IO on that file through that channel. This would
@@ -346,7 +346,8 @@ public class SingleFilePageSwapper implements PageSwapper
         long fileOffset = pageIdToPosition( startFilePageId );
         FileChannel channel = unwrappedChannel( startFilePageId );
         ByteBuffer[] srcs = convertToByteBuffers( pages, arrayOffset, length );
-        long bytesRead = lockPositionReadVector( startFilePageId, channel, fileOffset, srcs );
+        long bytesRead = lockPositionReadVector(
+                startFilePageId, channel, fileOffset, srcs );
         if ( bytesRead == -1 )
         {
             for ( Page page : pages )
@@ -381,10 +382,17 @@ public class SingleFilePageSwapper implements PageSwapper
     {
         try
         {
+            long toRead = filePageSize * (long) srcs.length;
+            long read, readTotal = 0;
             synchronized ( positionLock( channel ) )
             {
                 channel.position( fileOffset );
-                return channel.read( srcs );
+                do
+                {
+                    read = channel.read( srcs );
+                }
+                while ( read != -1 && (readTotal += read) < toRead );
+                return readTotal;
             }
         }
         catch ( ClosedChannelException e )
@@ -497,10 +505,17 @@ public class SingleFilePageSwapper implements PageSwapper
     {
         try
         {
+            long toWrite = filePageSize * (long) srcs.length;
+            long bytesWritten = 0;
             synchronized ( positionLock( channel ) )
             {
                 channel.position( fileOffset );
-                return channel.write( srcs );
+                do
+                {
+                    bytesWritten += channel.write( srcs );
+                }
+                while ( bytesWritten < toWrite );
+                return bytesWritten;
             }
         }
         catch ( ClosedChannelException e )

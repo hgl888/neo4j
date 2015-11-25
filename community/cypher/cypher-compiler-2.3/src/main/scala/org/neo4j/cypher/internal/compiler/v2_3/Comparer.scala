@@ -21,6 +21,7 @@ package org.neo4j.cypher.internal.compiler.v2_3
 
 import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions.StringHelper
 import org.neo4j.cypher.internal.compiler.v2_3.pipes.QueryState
+import org.neo4j.cypher.internal.frontend.v2_3.IncomparableValuesException
 
 /**
  * Comparer is a trait that enables it's subclasses to compare to AnyRef with each other.
@@ -31,7 +32,7 @@ trait Comparer extends StringHelper {
 
   def compare(l: Any, r: Any)(implicit qtx: QueryState): Int = {
     try {
-      if ( (isString(l) && isString(r)) || (isNumber(l) && isNumber(r)))
+      if ((isString(l) && isString(r)) || (isNumber(l) && isNumber(r)) || (isBoolean(l) && isBoolean(r)))
         CypherOrdering.DEFAULT.compare(l, r)
       else
         throw new IncomparableValuesException(textWithType(l), textWithType(r))
@@ -51,6 +52,11 @@ object Comparer {
 
   def isNumber(value: Any): Boolean = value match {
     case _: Number => true
+    case _ => value == null
+  }
+
+  def isBoolean(value: Any): Boolean = value match {
+    case _: Boolean => true
     case _ => value == null
   }
 }

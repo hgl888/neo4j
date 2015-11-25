@@ -19,9 +19,10 @@
  */
 package org.neo4j.cypher.internal.compiler.v2_3.ast.rewriters
 
-import org.neo4j.cypher.internal.compiler.v2_3.ast.AstConstructionTestSupport
-import org.neo4j.cypher.internal.compiler.v2_3.{SyntaxExceptionCreator, inSequence}
-import org.neo4j.cypher.internal.compiler.v2_3.test_helpers.CypherFunSuite
+import org.neo4j.cypher.internal.frontend.v2_3.ast.AstConstructionTestSupport
+import org.neo4j.cypher.internal.compiler.v2_3.SyntaxExceptionCreator
+import org.neo4j.cypher.internal.frontend.v2_3.inSequence
+import org.neo4j.cypher.internal.frontend.v2_3.test_helpers.CypherFunSuite
 
 class IsolateAggregationTest extends CypherFunSuite with RewriteTest with AstConstructionTestSupport {
   val rewriterUnderTest = isolateAggregation
@@ -135,6 +136,19 @@ class IsolateAggregationTest extends CypherFunSuite with RewriteTest with AstCon
     assertRewrite(
       "WITH 1 AS x, 2 AS y RETURN sum(x)*y AS a, sum(x)*y AS b",
       "WITH 1 AS x, 2 AS y WITH sum(x) as `  AGGREGATION27`, y as y RETURN `  AGGREGATION27`*y AS a, `  AGGREGATION27`*y AS b")
+  }
+
+  test("MATCH (a), (b) RETURN coalesce(a.prop, b.prop), b.prop, { x: count(b) }") {
+    assertRewrite(
+      """MATCH (a), (b)
+        |RETURN coalesce(a.prop, b.prop), b.prop, { x: count(b) }""".stripMargin,
+      """MATCH (a), (b)
+        |WITH coalesce(a.prop, b.prop) AS `  AGGREGATION22`,
+        |     b.prop AS `  AGGREGATION50`,
+        |     count(b) AS `  AGGREGATION61`
+        |RETURN `  AGGREGATION22` AS `coalesce(a.prop, b.prop)`,
+        |       `  AGGREGATION50` AS `b.prop`,
+        |       { x: `  AGGREGATION61` } AS `{ x: count(b) }`""".stripMargin)
   }
 
   override protected def parseForRewriting(queryText: String) = {

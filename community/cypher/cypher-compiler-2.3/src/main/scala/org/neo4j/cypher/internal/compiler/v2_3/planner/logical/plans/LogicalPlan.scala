@@ -21,13 +21,13 @@ package org.neo4j.cypher.internal.compiler.v2_3.planner.logical.plans
 
 import java.lang.reflect.Method
 
-import org.neo4j.cypher.internal.compiler.v2_3.Foldable._
-import org.neo4j.cypher.internal.compiler.v2_3.Rewritable._
-import org.neo4j.cypher.internal.compiler.v2_3.ast.{Identifier, Expression}
-import org.neo4j.cypher.internal.compiler.v2_3.perty._
-import org.neo4j.cypher.internal.compiler.v2_3.planner.{CardinalityEstimation, QueryGraph, PlannerQuery}
-import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.{QueryPlannerConfiguration, LogicalPlanningFunction2}
-import org.neo4j.cypher.internal.compiler.v2_3.{InternalException, Rewritable}
+import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.{LogicalPlanningFunction2, QueryPlannerConfiguration}
+import org.neo4j.cypher.internal.compiler.v2_3.planner.{CardinalityEstimation, PlannerQuery, QueryGraph}
+import org.neo4j.cypher.internal.frontend.v2_3.Foldable._
+import org.neo4j.cypher.internal.frontend.v2_3.Rewritable._
+import org.neo4j.cypher.internal.frontend.v2_3.ast.{Expression, Identifier}
+import org.neo4j.cypher.internal.frontend.v2_3.perty._
+import org.neo4j.cypher.internal.frontend.v2_3.{InternalException, Rewritable}
 
 /*
 A LogicalPlan is an algebraic query, which is represented by a query tree whose leaves are database relations and
@@ -65,6 +65,16 @@ abstract class LogicalPlan
     } catch {
       case e: IllegalArgumentException if e.getMessage.startsWith("wrong number of arguments") =>
         throw new InternalException("Logical plans need to be case classes, and have the PlannerQuery in a separate constructor")
+    }
+  }
+
+  def copyPlan(): LogicalPlan = {
+    try {
+      val arguments = this.children.toList :+ solved
+      copyConstructor.invoke(this, arguments: _*).asInstanceOf[this.type]
+    } catch {
+      case e: IllegalArgumentException if e.getMessage.startsWith("wrong number of arguments") =>
+        throw new InternalException("Logical plans need to be case classes, and have the PlannerQuery in a separate constructor", e)
     }
   }
 

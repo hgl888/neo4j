@@ -21,21 +21,21 @@ package org.neo4j.cypher.internal.compiler.v2_3.planner.logical.steps
 
 import org.mockito.Matchers._
 import org.mockito.Mockito._
-import org.neo4j.cypher.internal.compiler.v2_3.ast._
-import org.neo4j.cypher.internal.compiler.v2_3.notification.{IndexHintUnfulfillableNotification, JoinHintUnfulfillableNotification}
+import org.neo4j.cypher.internal.compiler.v2_3.RecordingNotificationLogger
 import org.neo4j.cypher.internal.compiler.v2_3.planner._
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.plans._
 import org.neo4j.cypher.internal.compiler.v2_3.spi.PlanContext
-import org.neo4j.cypher.internal.compiler.v2_3.test_helpers.CypherFunSuite
-import org.neo4j.cypher.internal.compiler.v2_3.{IndexHintException, JoinHintException, RecordingNotificationLogger}
-import org.neo4j.graphdb.Direction
+import org.neo4j.cypher.internal.frontend.v2_3.ast._
+import org.neo4j.cypher.internal.frontend.v2_3.notification.{IndexHintUnfulfillableNotification, JoinHintUnfulfillableNotification}
+import org.neo4j.cypher.internal.frontend.v2_3.test_helpers.CypherFunSuite
+import org.neo4j.cypher.internal.frontend.v2_3.{SemanticDirection, IndexHintException, JoinHintException}
 import org.neo4j.kernel.api.index.IndexDescriptor
 
 class ExtractBestPlanTest extends CypherFunSuite with LogicalPlanningTestSupport {
 
   private implicit val subQueryLookupTable = Map.empty[PatternExpression, QueryGraph]
 
-  private def newIndexHint(): Hint = { UsingIndexHint(ident("a"), LabelName("User")_, ident("name"))_ }
+  private def newIndexHint(): Hint = { UsingIndexHint(ident("a"), LabelName("User")_, PropertyKeyName("name")(pos))_ }
 
   private def newJoinHint(): Hint = { UsingJoinHint(Seq(ident("a")))_ }
 
@@ -80,7 +80,7 @@ class ExtractBestPlanTest extends CypherFunSuite with LogicalPlanningTestSupport
   }
 
   test("should throw when finding plan that does not solve all pattern relationships") {
-    val patternRel = PatternRelationship("r", ("a", "b"), Direction.OUTGOING, Seq.empty, VarPatternLength.unlimited)
+    val patternRel = PatternRelationship("r", ("a", "b"), SemanticDirection.OUTGOING, Seq.empty, VarPatternLength.unlimited)
     val query = PlannerQuery(
       QueryGraph(
         patternNodes = Set(IdName("a"), IdName("b")),

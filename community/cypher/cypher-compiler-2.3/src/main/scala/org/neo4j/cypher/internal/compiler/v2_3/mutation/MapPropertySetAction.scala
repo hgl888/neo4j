@@ -25,13 +25,15 @@ import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{Effects, _}
 import org.neo4j.cypher.internal.compiler.v2_3.helpers.{IsMap, MapSupport}
 import org.neo4j.cypher.internal.compiler.v2_3.pipes.QueryState
 import org.neo4j.cypher.internal.compiler.v2_3.spi.{Operations, QueryContext}
-import org.neo4j.cypher.internal.compiler.v2_3.symbols._
+import org.neo4j.cypher.internal.compiler.v2_3.symbols.SymbolTable
+import org.neo4j.cypher.internal.frontend.v2_3.CypherTypeException
+import org.neo4j.cypher.internal.frontend.v2_3.symbols._
 import org.neo4j.graphdb.{Node, PropertyContainer, Relationship}
 
 import scala.collection.Map
 
 case class MapPropertySetAction(element: Expression, mapExpression: Expression, removeOtherProps:Boolean)
-  extends UpdateAction with GraphElementPropertyFunctions with MapSupport {
+  extends SetAction with MapSupport {
 
   def exec(context: ExecutionContext, state: QueryState) = {
     val qtx = state.query
@@ -96,7 +98,7 @@ case class MapPropertySetAction(element: Expression, mapExpression: Expression, 
 
   def children = Seq(element, mapExpression)
 
-  def rewrite(f: (Expression) => Expression) = MapPropertySetAction(element.rewrite(f), mapExpression.rewrite(f), removeOtherProps)
+  def rewrite(f: (Expression) => Expression): MapPropertySetAction = MapPropertySetAction(element.rewrite(f), mapExpression.rewrite(f), removeOtherProps)
 
   def symbolTableDependencies = element.symbolTableDependencies ++ mapExpression.symbolTableDependencies
 

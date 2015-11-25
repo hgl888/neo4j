@@ -20,7 +20,7 @@
 package org.neo4j.cypher.internal.compiler.v2_3.spi
 
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.{Cardinality, Selectivity}
-import org.neo4j.cypher.internal.compiler.v2_3.{LabelId, PropertyKeyId, RelTypeId}
+import org.neo4j.cypher.internal.frontend.v2_3.{PropertyKeyId, RelTypeId, LabelId}
 
 import scala.collection.mutable
 
@@ -59,7 +59,7 @@ case class GraphStatisticsSnapshot(map: Map[StatisticsKey, Double] = Map.empty) 
     val v2 = snapshot.map.values
     //find the maximum relative difference (|e1 - e2| / max(e1, e2))
     val relativeDiff = v1.zip(v2).map(e => Math.abs(e._1 - e._2) / Math.max(e._1, e._2)).max
-    relativeDiff >= minThreshold
+    relativeDiff > minThreshold
   }
 }
 

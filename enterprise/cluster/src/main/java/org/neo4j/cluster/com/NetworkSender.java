@@ -19,23 +19,6 @@
  */
 package org.neo4j.cluster.com;
 
-import java.net.ConnectException;
-import java.net.InetSocketAddress;
-import java.net.SocketAddress;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.nio.channels.ClosedChannelException;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.TimeUnit;
-
 import org.jboss.netty.bootstrap.ClientBootstrap;
 import org.jboss.netty.channel.Channel;
 import org.jboss.netty.channel.ChannelFuture;
@@ -54,6 +37,23 @@ import org.jboss.netty.channel.socket.nio.NioClientSocketChannelFactory;
 import org.jboss.netty.handler.codec.serialization.ObjectEncoder;
 import org.jboss.netty.util.ThreadNameDeterminer;
 import org.jboss.netty.util.ThreadRenamingRunnable;
+
+import java.net.ConnectException;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.channels.ClosedChannelException;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 
 import org.neo4j.cluster.com.message.Message;
 import org.neo4j.cluster.com.message.MessageSender;
@@ -101,18 +101,18 @@ public class NetworkSender
 
     // Sending
     // One executor for each receiving instance, so that one blocking instance cannot block others receiving messages
-    private Map<URI, ExecutorService> senderExecutors = new HashMap<URI, ExecutorService>();
-    private Set<URI> failedInstances = new HashSet<URI>(); // Keeps track of what instances we have failed to open
+    private final Map<URI, ExecutorService> senderExecutors = new HashMap<URI, ExecutorService>();
+    private final Set<URI> failedInstances = new HashSet<URI>(); // Keeps track of what instances we have failed to open
     // connections to
     private ClientBootstrap clientBootstrap;
 
     private final Monitor monitor;
-    private Configuration config;
+    private final Configuration config;
     private final NetworkReceiver receiver;
-    private Log msgLog;
+    private final Log msgLog;
     private URI me;
 
-    private Map<URI, Channel> connections = new ConcurrentHashMap<URI, Channel>();
+    private final Map<URI, Channel> connections = new ConcurrentHashMap<URI, Channel>();
     private Iterable<NetworkChannelsListener> listeners = Listeners.newListeners();
 
     private volatile boolean paused;
@@ -163,6 +163,13 @@ public class NetworkSender
                 Executors.newFixedThreadPool( 2, daemon( "Cluster client worker", monitor ) ), 2 ) );
         clientBootstrap.setOption( "tcpNoDelay", true );
         clientBootstrap.setPipelineFactory( new NetworkNodePipelineFactory() );
+
+        msgLog.debug( "Started NetworkSender for " + toString( config ) );
+    }
+
+    private String toString( Configuration config )
+    {
+        return "defaultPort:" + config.defaultPort() + ", port:" + config.port();
     }
 
     @Override
@@ -188,7 +195,7 @@ public class NetworkSender
 
         channels.close().awaitUninterruptibly();
         clientBootstrap.releaseExternalResources();
-        msgLog.debug( "Shutting down NetworkSender complete" );
+        msgLog.debug( "Shutting down NetworkSender for " + toString( config ) + " complete" );
     }
 
     @Override
@@ -306,6 +313,10 @@ public class NetworkSender
                             {
                                 msgLog.debug( "Unable to write " + message + " to " + future.getChannel(),
                                         future.getCause() );
+                                closedChannel( future.getChannel() );
+
+                                // Try again
+                                send( message );
                             }
                         }
                     } );

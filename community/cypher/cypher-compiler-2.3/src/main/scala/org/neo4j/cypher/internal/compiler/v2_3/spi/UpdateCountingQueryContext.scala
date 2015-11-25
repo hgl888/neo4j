@@ -21,7 +21,8 @@ package org.neo4j.cypher.internal.compiler.v2_3.spi
 
 import java.util.concurrent.atomic.AtomicInteger
 import org.neo4j.cypher.internal.compiler.v2_3.InternalQueryStatistics
-import org.neo4j.graphdb.{Direction, PropertyContainer, Relationship, Node}
+import org.neo4j.cypher.internal.frontend.v2_3.SemanticDirection
+import org.neo4j.graphdb.{PropertyContainer, Relationship, Node}
 
 class UpdateCountingQueryContext(inner: QueryContext) extends DelegatingQueryContext(inner) {
 
@@ -77,6 +78,11 @@ class UpdateCountingQueryContext(inner: QueryContext) extends DelegatingQueryCon
     inner.createRelationship(start, end, relType)
   }
 
+  override def createRelationship(start: Long, end: Long, relType: Int) = {
+    relationshipsCreated.increase()
+    inner.createRelationship(start, end, relType)
+  }
+
   override def removeLabelsFromNode(node: Long, labelIds: Iterator[Int]): Int = {
     val removed = inner.removeLabelsFromNode(node, labelIds)
     labelsRemoved.increase(removed)
@@ -127,7 +133,7 @@ class UpdateCountingQueryContext(inner: QueryContext) extends DelegatingQueryCon
     propertyExistenceConstraintsRemoved.increase()
   }
 
-  override def nodeGetDegree(node: Long, dir: Direction): Int = super.nodeGetDegree(node, dir)
+  override def nodeGetDegree(node: Long, dir: SemanticDirection): Int = super.nodeGetDegree(node, dir)
 
   class Counter {
     val counter: AtomicInteger = new AtomicInteger()

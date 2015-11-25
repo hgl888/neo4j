@@ -28,12 +28,27 @@ public interface NotificationDetail
 
     String value();
 
-    public final static class Factory
+    final class Factory
     {
         public static NotificationDetail index( final String labelName, final String propertyKeyName )
         {
             return createNotificationDetail( "hinted index",
                     String.format( "index on :%s(%s)", labelName, propertyKeyName ), true );
+        }
+
+        public static NotificationDetail label( final String labelName )
+        {
+            return createNotificationDetail( "the missing label name is", labelName, true );
+        }
+
+        public static NotificationDetail relationshipType( final String relType )
+        {
+            return createNotificationDetail( "the missing relationship type is", relType, true );
+        }
+
+        public static NotificationDetail propertyName( final String name )
+        {
+            return createNotificationDetail( "the missing property name is", name, true );
         }
 
         public static NotificationDetail joinKey( List<String> identifiers )
@@ -62,18 +77,29 @@ public interface NotificationDetail
 
         public static NotificationDetail cartesianProduct( Set<String> identifiers )
         {
+            return createNotificationDetail( identifiers, "identifier", "identifiers" );
+        }
+
+        public static NotificationDetail indexSeekOrScan( Set<String> labels )
+        {
+            return createNotificationDetail( labels, "indexed label", "indexed labels" );
+        }
+
+        private static NotificationDetail createNotificationDetail( Set<String> elements, String singularTerm,
+                String pluralTerm )
+        {
             StringBuilder builder = new StringBuilder();
             builder.append( "(" );
             String separator = "";
-            for ( String identifier : identifiers )
+            for ( String element : elements )
             {
                 builder.append( separator );
-                builder.append( identifier );
+                builder.append( element );
                 separator = ", ";
             }
             builder.append( ")" );
-            boolean singular = identifiers.size() == 1;
-            return createNotificationDetail( singular ? "identifier" : "identifiers", builder.toString(), singular );
+            boolean singular = elements.size() == 1;
+            return createNotificationDetail( singular ? singularTerm : pluralTerm, builder.toString(), singular );
         }
 
         private static NotificationDetail createNotificationDetail( final String name, final String value,

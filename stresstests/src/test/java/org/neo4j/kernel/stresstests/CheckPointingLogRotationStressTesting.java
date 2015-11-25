@@ -5,17 +5,17 @@
  * This file is part of Neo4j.
  *
  * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 package org.neo4j.kernel.stresstests;
 
@@ -78,13 +78,14 @@ public class CheckPointingLogRotationStressTesting
         GraphDatabaseService db = new GraphDatabaseFactory().newEmbeddedDatabaseBuilder( storeDir )
                 .setConfig( GraphDatabaseSettings.pagecache_memory, pageCacheMemory )
                 .setConfig( GraphDatabaseSettings.mapped_memory_page_size, pageSize )
+                .setConfig( GraphDatabaseSettings.check_point_interval_time, "1m" )
                 .setConfig( GraphDatabaseFacadeFactory.Configuration.tracer, "timer" )
                 .newGraphDatabase();
 
         System.out.println("3/6\tWarm up db...");
         try ( Workload workload = new Workload( db, defaultRandomMutation( nodeCount, db ), threads ) )
         {
-            workload.run( TimeUnit.SECONDS.toMillis( 10 ), Workload.TransactionThroughput.NONE );
+            workload.run( TimeUnit.SECONDS.toMillis( 30 ), Workload.TransactionThroughput.NONE );
         }
 
         System.out.println( "4/6\tStarting workload..." );

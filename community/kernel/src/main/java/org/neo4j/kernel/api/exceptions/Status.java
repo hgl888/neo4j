@@ -164,7 +164,16 @@ public interface Status
         DeprecationWarning( ClientNotification, "This feature is deprecated and will be removed in future versions." ),
         JoinHintUnfulfillableWarning( ClientNotification, "The database was unable to plan a hinted join." ),
         JoinHintUnsupportedWarning( ClientNotification, "Queries with join hints are not supported by the RULE planner." ),
-        ;
+        DynamicPropertyWarning( ClientNotification, "Queries using dynamic properties will use neither index seeks " +
+                                                    "nor index scans for those properties" ),
+        EagerWarning(ClientNotification, "The execution plan for this query contains the Eager operator, " +
+                                         "which forces all dependent data to be materialized in main memory " +
+                                         "before proceeding"),
+        IndexMissingWarning( ClientNotification, "Adding a schema index may speed up this query." ),
+        LabelMissingWarning( ClientNotification, "The provided label is not in the database." ),
+        RelTypeMissingWarning( ClientNotification, "The provided relationship type is not in the database." ),
+        PropertyNameMissingWarning( ClientNotification, "The provided property name is not in the database" ),
+        UnboundedPatternWarning( ClientNotification, "The provided pattern is unbounded, consider adding an upper limit to the number of node hops."  );
 
         private final Code code;
 
@@ -407,7 +416,7 @@ public interface Status
     enum Classification
     {
         /** The Client sent a bad request - changing the request might yield a successful outcome. */
-        ClientError( TransactionEffect.NONE, PublishingPolicy.PUBLISHABLE,
+        ClientError( TransactionEffect.ROLLBACK, PublishingPolicy.PUBLISHABLE,
                 "The Client sent a bad request - changing the request might yield a successful outcome."),
         /** There are notifications about the request sent by the client.*/
         ClientNotification( TransactionEffect.NONE, PublishingPolicy.PUBLISHABLE,

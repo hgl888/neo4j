@@ -19,12 +19,14 @@
  */
 package org.neo4j.cypher.internal.compiler.v2_3
 
+import java.util.concurrent.TimeUnit
+
 import org.neo4j.cypher.GraphDatabaseTestSupport
 import org.neo4j.cypher.internal.compatibility.{StringInfoLogger2_3, WrappedMonitors2_3}
-import org.neo4j.cypher.internal.compiler.v2_3.ast.Statement
+import org.neo4j.cypher.internal.frontend.v2_3.ast.Statement
 import org.neo4j.cypher.internal.compiler.v2_3.executionplan.ExecutionPlan
 import org.neo4j.cypher.internal.compiler.v2_3.tracing.rewriters.RewriterStepSequencer
-import org.neo4j.cypher.internal.compiler.v2_3.test_helpers.CypherFunSuite
+import org.neo4j.cypher.internal.frontend.v2_3.test_helpers.CypherFunSuite
 import org.neo4j.cypher.internal.spi.v2_3.GeneratedQueryStructure
 import org.neo4j.graphdb.factory.GraphDatabaseSettings
 import org.neo4j.helpers.{Clock, FrozenClock}
@@ -37,13 +39,21 @@ class CypherCompilerAstCacheAcceptanceTest extends CypherFunSuite with GraphData
   def createCompiler(queryCacheSize: Int = 128, statsDivergenceThreshold: Double = 0.5, queryPlanTTL: Long = 1000,
                      clock: Clock = Clock.SYSTEM_CLOCK, log: Log = NullLog.getInstance) =
     CypherCompilerFactory.costBasedCompiler(
-      graph, queryCacheSize, statsDivergenceThreshold, queryPlanTTL, clock, GeneratedQueryStructure,
+      graph,
+      CypherCompilerConfiguration(
+        queryCacheSize,
+        statsDivergenceThreshold,
+        queryPlanTTL,
+        useErrorsOverWarnings = false,
+        nonIndexedLabelWarningThreshold = 10000L
+      ),
+      clock, GeneratedQueryStructure,
       new WrappedMonitors2_3(kernelMonitors),
       new StringInfoLogger2_3(log),
       plannerName = Some(GreedyPlannerName),
       runtimeName = Some(CompiledRuntimeName),
-      rewriterSequencer = RewriterStepSequencer.newValidating,
-      useErrorsOverWarnings = false)
+      rewriterSequencer = RewriterStepSequencer.newValidating
+     )
 
   case class CacheCounts(hits: Int = 0, misses: Int = 0, flushes: Int = 0, evicted: Int = 0) {
     override def toString = s"hits = $hits, misses = $misses, flushes = $flushes, evicted = $evicted"
@@ -127,7 +137,7 @@ class CypherCompilerAstCacheAcceptanceTest extends CypherFunSuite with GraphData
   test("should monitor cache remove") {
     // given
     val counter = new CacheCounter()
-    val clock: Clock = new FrozenClock(1000)
+    val clock: Clock = new FrozenClock(1000, TimeUnit.MILLISECONDS)
     val compiler = createCompiler(queryPlanTTL = 0, clock = clock)
     compiler.monitors.addMonitorListener(counter)
     val query: String = "match (n:Person:Dog) return n"
@@ -148,7 +158,7 @@ class CypherCompilerAstCacheAcceptanceTest extends CypherFunSuite with GraphData
     // given
     val counter = new CacheCounter()
     val logProvider = new AssertableLogProvider()
-    val clock: Clock = new FrozenClock(1000)
+    val clock: Clock = new FrozenClock(1000, TimeUnit.MILLISECONDS)
     val compiler = createCompiler(queryPlanTTL = 0, clock = clock, log = logProvider.getLog(getClass))
     compiler.monitors.addMonitorListener(counter)
     val query: String = "match (n:Person:Dog) return n"

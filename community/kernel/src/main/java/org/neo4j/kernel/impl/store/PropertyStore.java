@@ -31,8 +31,6 @@ import org.neo4j.cursor.GenericCursor;
 import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.UTF8;
 import org.neo4j.helpers.collection.IteratorUtil;
-import org.neo4j.helpers.collection.Visitor;
-import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.io.pagecache.PageCache;
 import org.neo4j.io.pagecache.PageCursor;
 import org.neo4j.kernel.IdGeneratorFactory;
@@ -46,9 +44,7 @@ import org.neo4j.kernel.impl.store.record.PropertyBlock;
 import org.neo4j.kernel.impl.store.record.PropertyRecord;
 import org.neo4j.kernel.impl.store.record.Record;
 import org.neo4j.kernel.impl.transaction.state.PropertyRecordChange;
-import org.neo4j.kernel.monitoring.Monitors;
 import org.neo4j.logging.LogProvider;
-import org.neo4j.logging.Logger;
 
 import static org.neo4j.helpers.collection.IteratorUtil.first;
 import static org.neo4j.io.pagecache.PagedFile.PF_EXCLUSIVE_LOCK;
@@ -76,9 +72,9 @@ public class PropertyStore extends AbstractRecordStore<PropertyRecord>
             + DEFAULT_PAYLOAD_SIZE /*property blocks*/;
     // = 41
 
-    private DynamicStringStore stringPropertyStore;
-    private PropertyKeyTokenStore propertyKeyTokenStore;
-    private DynamicArrayStore arrayPropertyStore;
+    private final DynamicStringStore stringPropertyStore;
+    private final PropertyKeyTokenStore propertyKeyTokenStore;
+    private final DynamicArrayStore arrayPropertyStore;
     private final PropertyPhysicalToLogicalConverter physicalToLogicalConverter;
 
     public PropertyStore(
@@ -86,16 +82,12 @@ public class PropertyStore extends AbstractRecordStore<PropertyRecord>
             Config configuration,
             IdGeneratorFactory idGeneratorFactory,
             PageCache pageCache,
-            FileSystemAbstraction fileSystemAbstraction,
             LogProvider logProvider,
             DynamicStringStore stringPropertyStore,
             PropertyKeyTokenStore propertyKeyTokenStore,
-            DynamicArrayStore arrayPropertyStore,
-            StoreVersionMismatchHandler versionMismatchHandler,
-            Monitors monitors )
+            DynamicArrayStore arrayPropertyStore )
     {
-        super( fileName, configuration, IdType.PROPERTY, idGeneratorFactory, pageCache,
-                fileSystemAbstraction, logProvider, versionMismatchHandler, monitors );
+        super( fileName, configuration, IdType.PROPERTY, idGeneratorFactory, pageCache, logProvider );
         this.stringPropertyStore = stringPropertyStore;
         this.propertyKeyTokenStore = propertyKeyTokenStore;
         this.arrayPropertyStore = arrayPropertyStore;
@@ -117,26 +109,6 @@ public class PropertyStore extends AbstractRecordStore<PropertyRecord>
     public DynamicArrayStore getArrayStore()
     {
         return arrayPropertyStore;
-    }
-
-    @Override
-    protected void closeStorage()
-    {
-        if ( stringPropertyStore != null )
-        {
-            stringPropertyStore.close();
-            stringPropertyStore = null;
-        }
-        if ( propertyKeyTokenStore != null )
-        {
-            propertyKeyTokenStore.close();
-            propertyKeyTokenStore = null;
-        }
-        if ( arrayPropertyStore != null )
-        {
-            arrayPropertyStore.close();
-            arrayPropertyStore = null;
-        }
     }
 
     @Override
@@ -364,12 +336,20 @@ public class PropertyStore extends AbstractRecordStore<PropertyRecord>
     public PageCursor newReadCursor( long recordId ) throws IOException
     {
         PageCursor cursor = storeFile.io( pageIdForRecord( recordId ), PF_SHARED_LOCK );
-        if ( !cursor.next() )
+        try
         {
-            throw new IOException( "Record not found: " + recordId );
+            if ( !cursor.next() )
+            {
+                throw new IOException( "Record not found: " + recordId );
+            }
+            cursor.setOffset( (int) (recordId * RECORD_SIZE % storeFile.pageSize()) );
+            return cursor;
         }
-        cursor.setOffset( (int) (recordId * RECORD_SIZE % storeFile.pageSize()) );
-        return cursor;
+        catch ( Throwable failure )
+        {
+            cursor.close();
+            throw failure;
+        }
     }
 
     public PropertyRecord getRecord( PropertyRecord record, PageCursor cursor )
@@ -496,24 +476,6 @@ public class PropertyStore extends AbstractRecordStore<PropertyRecord>
         return propertyBlock.getType().getValue( propertyBlock, this );
     }
 
-    @Override
-    public void makeStoreOk()
-    {
-        propertyKeyTokenStore.makeStoreOk();
-        stringPropertyStore.makeStoreOk();
-        arrayPropertyStore.makeStoreOk();
-        super.makeStoreOk();
-    }
-
-    @Override
-    public void visitStore( Visitor<CommonAbstractStore, RuntimeException> visitor )
-    {
-        propertyKeyTokenStore.visitStore( visitor );
-        stringPropertyStore.visitStore( visitor );
-        arrayPropertyStore.visitStore( visitor );
-        visitor.visit( this );
-    }
-
     public static void allocateStringRecords( Collection<DynamicRecord> target, byte[] chars,
             DynamicRecordAllocator allocator )
     {
@@ -619,7 +581,7 @@ public class PropertyStore extends AbstractRecordStore<PropertyRecord>
         }
     }
 
-    private static void setSingleBlockValue( PropertyBlock block, int keyId, PropertyType type, long longValue )
+    public static void setSingleBlockValue( PropertyBlock block, int keyId, PropertyType type, long longValue )
     {
         block.setSingleBlock( singleBlockLongValue( keyId, type, longValue ) );
     }
@@ -671,24 +633,6 @@ public class PropertyStore extends AbstractRecordStore<PropertyRecord>
     public int getArrayBlockSize()
     {
         return arrayPropertyStore.getBlockSize();
-    }
-
-    @Override
-    public void logVersions( Logger logger )
-    {
-        super.logVersions( logger );
-        propertyKeyTokenStore.logVersions( logger );
-        stringPropertyStore.logVersions( logger );
-        arrayPropertyStore.logVersions( logger );
-    }
-
-    @Override
-    public void logIdUsage( Logger logger )
-    {
-        super.logIdUsage( logger );
-        propertyKeyTokenStore.logIdUsage( logger );
-        stringPropertyStore.logIdUsage( logger );
-        arrayPropertyStore.logIdUsage( logger );
     }
 
     @Override

@@ -23,6 +23,8 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.Executor;
 
 import org.neo4j.function.Consumer;
@@ -31,6 +33,7 @@ import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.kernel.impl.util.JobScheduler;
 import org.neo4j.kernel.lifecycle.Lifecycle;
 import org.neo4j.logging.FormattedLogProvider;
+import org.neo4j.logging.Level;
 import org.neo4j.logging.LogProvider;
 import org.neo4j.logging.NullLogProvider;
 import org.neo4j.logging.RotatingFileOutputStreamSupplier;
@@ -49,6 +52,8 @@ public class StoreLogService extends AbstractLogService implements Lifecycle
         private int internalLogRotationDelay = 0;
         private int maxInternalLogArchives = 0;
         private Consumer<LogProvider> rotationListener = Consumers.noop();
+        private Map<String, Level> logLevels = new HashMap<>();
+        private Level defaultLevel = Level.INFO;
 
         private Builder()
         {
@@ -83,6 +88,18 @@ public class StoreLogService extends AbstractLogService implements Lifecycle
             return this;
         }
 
+        public Builder withLevel( String context, Level level )
+        {
+            this.logLevels.put( context, level );
+            return this;
+        }
+
+        public Builder withDefaultLevel( Level defaultLevel )
+        {
+            this.defaultLevel = defaultLevel;
+            return this;
+        }
+
         public StoreLogService inStoreDirectory( FileSystemAbstraction fileSystem, File storeDir ) throws IOException
         {
             return toFile( fileSystem, new File( storeDir, INTERNAL_LOG_NAME ) );
@@ -92,7 +109,7 @@ public class StoreLogService extends AbstractLogService implements Lifecycle
         {
             return new StoreLogService(
                     userLogProvider,
-                    fileSystem, internalLogPath,
+                    fileSystem, internalLogPath, logLevels, defaultLevel,
                     internalLogRotationThreshold, internalLogRotationDelay, maxInternalLogArchives, rotationExecutor, rotationListener );
         }
     }
@@ -115,20 +132,30 @@ public class StoreLogService extends AbstractLogService implements Lifecycle
     private final Closeable closeable;
     private final SimpleLogService logService;
 
-    private StoreLogService( LogProvider userLogProvider, FileSystemAbstraction fileSystem, File internalLog,
-            long internalLogRotationThreshold, int internalLogRotationDelay, int maxInternalLogArchives,
-            Executor rotationExecutor, final Consumer<LogProvider> rotationListener ) throws IOException
+    private StoreLogService( LogProvider userLogProvider,
+            FileSystemAbstraction fileSystem,
+            File internalLog,
+            Map<String, Level> logLevels,
+            Level defaultLevel,
+            long internalLogRotationThreshold,
+            int internalLogRotationDelay,
+            int maxInternalLogArchives,
+            Executor rotationExecutor,
+            final Consumer<LogProvider> rotationListener ) throws IOException
     {
         if ( !internalLog.getParentFile().exists() )
         {
             internalLog.getParentFile().mkdirs();
         }
 
+        final FormattedLogProvider.Builder internalLogBuilder = FormattedLogProvider.withUTCTimeZone()
+                .withDefaultLogLevel( defaultLevel ).withLogLevels( logLevels );
+
         FormattedLogProvider internalLogProvider;
         if ( internalLogRotationThreshold == 0 )
         {
             OutputStream outputStream = createOrOpenAsOuputStream( fileSystem, internalLog, true );
-            internalLogProvider = FormattedLogProvider.withUTCTimeZone().toOutputStream( outputStream );
+            internalLogProvider = internalLogBuilder.toOutputStream( outputStream );
             rotationListener.accept( internalLogProvider );
             this.closeable = outputStream;
         }
@@ -141,13 +168,13 @@ public class StoreLogService extends AbstractLogService implements Lifecycle
                 @Override
                 public void outputFileCreated( OutputStream newStream, OutputStream oldStream )
                 {
-                    FormattedLogProvider logProvider = FormattedLogProvider.withUTCTimeZone().toOutputStream( newStream );
+                    FormattedLogProvider logProvider = internalLogBuilder.toOutputStream( newStream );
                     logProvider.getLog( StoreLogService.class ).info( "Opened new internal log file" );
                     rotationListener.accept( logProvider );
                     logProvider.getLog( StoreLogService.class ).info( "Rotated internal log file" );
                 }
             } );
-            internalLogProvider = FormattedLogProvider.withUTCTimeZone().toOutputStream( rotatingSupplier );
+            internalLogProvider = internalLogBuilder.toOutputStream( rotatingSupplier );
             this.closeable = rotatingSupplier;
         }
         this.logService = new SimpleLogService( userLogProvider, internalLogProvider );

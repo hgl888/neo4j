@@ -20,13 +20,15 @@
 package org.neo4j.cypher.internal.compiler.v2_3.commands.predicates
 
 import org.neo4j.cypher.internal.compiler.v2_3._
-import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions.{Expression, Identifier, Literal, Property}
+import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions.{Expression, Literal}
 import org.neo4j.cypher.internal.compiler.v2_3.commands.values.KeyToken
-import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{Effects, ReadsLabel}
-import org.neo4j.cypher.internal.compiler.v2_3.helpers.{CastSupport, CollectionSupport, IsCollection, NonEmptyList}
-import org.neo4j.cypher.internal.compiler.v2_3.parser.ParsedLikePattern
+import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{ReadsNodesWithLabels, Effects}
+import org.neo4j.cypher.internal.compiler.v2_3.helpers.{IsMap, CastSupport, CollectionSupport, IsCollection}
 import org.neo4j.cypher.internal.compiler.v2_3.pipes.QueryState
-import org.neo4j.cypher.internal.compiler.v2_3.symbols._
+import org.neo4j.cypher.internal.compiler.v2_3.symbols.SymbolTable
+import org.neo4j.cypher.internal.frontend.v2_3.CypherTypeException
+import org.neo4j.cypher.internal.frontend.v2_3.helpers.NonEmptyList
+import org.neo4j.cypher.internal.frontend.v2_3.symbols._
 import org.neo4j.graphdb._
 
 import scala.util.{Failure, Success, Try}
@@ -150,6 +152,7 @@ case class PropertyExists(identifier: Expression, propertyKey: KeyToken) extends
   def isMatch(m: ExecutionContext)(implicit state: QueryState): Option[Boolean] = identifier(m) match {
     case pc: Node         => Some(propertyKey.getOptId(state.query).exists(state.query.nodeOps.hasProperty(pc.getId, _)))
     case pc: Relationship => Some(propertyKey.getOptId(state.query).exists(state.query.relationshipOps.hasProperty(pc.getId, _)))
+    case IsMap(map)       => Some(map(state.query).get(propertyKey.name).orNull != null)
     case null             => None
     case _                => throw new CypherTypeException("Expected " + identifier + " to be a property container.")
   }
@@ -167,24 +170,48 @@ case class PropertyExists(identifier: Expression, propertyKey: KeyToken) extends
   override def localEffects(symbols: SymbolTable) = Effects.propertyRead(identifier, symbols)(propertyKey.name)
 }
 
-case class LiteralLikePattern(predicate: Predicate, pattern: ParsedLikePattern, caseInsensitive: Boolean = false) extends Predicate {
-  def isMatch(m: ExecutionContext)(implicit state: QueryState) = predicate.isMatch(m)
-  def containsIsNull = predicate.containsIsNull
+trait StringOperator {
+  self: Predicate =>
+  override def isMatch(m: ExecutionContext)(implicit state: QueryState) = (lhs(m), rhs(m)) match {
+    case (null, _) => None
+    case (_, null) => None
+    case (l: String, r: String) => Some(compare(l,r))
+    case (l, r) => throw new CypherTypeException(s"Expected two strings, but got $l and $r")
+  }
 
-  def rewrite(f: (Expression) => Expression) = f(copy(predicate = f(predicate).asInstanceOf[Predicate]))
+  def lhs: Expression
+  def rhs: Expression
+  def compare(a: String, b: String): Boolean
+  override def containsIsNull = false
+  override def arguments = Seq(lhs, rhs)
+  override def symbolTableDependencies = lhs.symbolTableDependencies ++ rhs.symbolTableDependencies
+}
 
-  def arguments = predicate.arguments
+case class StartsWith(lhs: Expression, rhs: Expression) extends Predicate with StringOperator {
+  override def compare(a: String, b: String) = a.startsWith(b)
 
-  def symbolTableDependencies = predicate.symbolTableDependencies
+  override def rewrite(f: (Expression) => Expression) = f(copy(lhs.rewrite(f), rhs.rewrite(f)))
+}
+
+case class EndsWith(lhs: Expression, rhs: Expression) extends Predicate with StringOperator {
+  override def compare(a: String, b: String) = a.endsWith(b)
+
+  override def rewrite(f: (Expression) => Expression) = f(copy(lhs.rewrite(f), rhs.rewrite(f)))
+}
+
+case class Contains(lhs: Expression, rhs: Expression) extends Predicate with StringOperator {
+  override def compare(a: String, b: String) = a.contains(b)
+
+  override def rewrite(f: (Expression) => Expression) = f(copy(lhs.rewrite(f), rhs.rewrite(f)))
 }
 
 case class LiteralRegularExpression(lhsExpr: Expression, regexExpr: Literal)(implicit converter: String => String = identity) extends Predicate {
   lazy val pattern = converter(regexExpr.v.asInstanceOf[String]).r.pattern
 
   def isMatch(m: ExecutionContext)(implicit state: QueryState) =
-    Option(lhsExpr(m)).map { lhsValue =>
-      val v = CastSupport.castOrFail[String](lhsValue)
-      pattern.matcher(v).matches()
+    lhsExpr(m) match {
+      case s: String => Some(pattern.matcher(s).matches())
+      case _ => None
     }
 
   def containsIsNull = false
@@ -197,6 +224,8 @@ case class LiteralRegularExpression(lhsExpr: Expression, regexExpr: Literal)(imp
   def arguments = Seq(lhsExpr, regexExpr)
 
   def symbolTableDependencies = lhsExpr.symbolTableDependencies ++ regexExpr.symbolTableDependencies
+
+  override def toString = s"$lhsExpr =~ $regexExpr"
 }
 
 case class RegularExpression(lhsExpr: Expression, regexExpr: Expression)(implicit converter: String => String = identity) extends Predicate {
@@ -206,9 +235,11 @@ case class RegularExpression(lhsExpr: Expression, regexExpr: Expression)(implici
     case (_, null) =>
       None
     case (lhs, rhs)  =>
-      val lhsAsString = CastSupport.castOrFail[String](lhs)
       val rhsAsRegexString = converter(CastSupport.castOrFail[String](rhs))
-      Some(rhsAsRegexString.r.pattern.matcher(lhsAsString).matches())
+      if (!lhs.isInstanceOf[String])
+        None
+      else
+        Some(rhsAsRegexString.r.pattern.matcher(lhs.asInstanceOf[String]).matches())
   }
 
   override def toString: String = lhsExpr.toString() + " ~= /" + regexExpr.toString() + "/"
@@ -277,7 +308,7 @@ case class HasLabel(entity: Expression, label: KeyToken) extends Predicate {
 
   def containsIsNull = false
 
-  override def localEffects(symbols: SymbolTable) = Effects(ReadsLabel(label.name))
+  override def localEffects(symbols: SymbolTable) = Effects(ReadsNodesWithLabels(label.name))
 }
 
 case class CoercedPredicate(inner:Expression) extends Predicate with CollectionSupport {

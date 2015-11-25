@@ -20,7 +20,7 @@
 package org.neo4j.internal.cypher.acceptance
 
 import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions.PathImpl
-import org.neo4j.cypher.{CypherTypeException, ExecutionEngineFunSuite, NewPlannerTestSupport, QueryStatisticsTestSupport}
+import org.neo4j.cypher._
 import org.neo4j.graphdb._
 
 import scala.collection.JavaConverters._
@@ -71,9 +71,9 @@ class MatchAcceptanceTest extends ExecutionEngineFunSuite with QueryStatisticsTe
     val child = createLabeledNode(Map("id" -> 0), "Child")
     relate(root, child)
 
-    val query = "MATCH (:Root {name:'x'})-->(i:Child) WHERE i.id =~ 'te.*' RETURN i"
+    val query = "MATCH (:Root {name:'x'})-->(i:Child) WHERE i.id > 'te' RETURN i"
 
-    a [CypherTypeException] should be thrownBy executeWithAllPlanners(query)
+    a [IncomparableValuesException] should be thrownBy executeWithAllPlanners(query)
   }
 
   test("exceptions should be thrown if rows are kept through OR'd predicates") {
@@ -81,9 +81,9 @@ class MatchAcceptanceTest extends ExecutionEngineFunSuite with QueryStatisticsTe
     val child = createLabeledNode(Map("id" -> 0), "Child")
     relate(root, child)
 
-    val query = "MATCH (:Root {name:'x'})-->(i) WHERE NOT has(i.id) OR i.id =~ 'te.*' RETURN i"
+    val query = "MATCH (:Root {name:'x'})-->(i) WHERE NOT has(i.id) OR i.id > 'te' RETURN i"
 
-    a [CypherTypeException] should be thrownBy executeWithAllPlanners(query)
+    a [IncomparableValuesException] should be thrownBy executeWithAllPlanners(query)
   }
 
   test("combines aggregation and named path") {
@@ -997,7 +997,7 @@ return b
     result.executionPlanDescription.toString should include("IndexSeek")
   }
 
-  test("should be able to use index hints with LIKE predicates") {
+  test("should be able to use index hints with STARTS WITH predicates") {
     // given
     val andres = createLabeledNode(Map("name" -> "Andres"), "Person")
     val jake = createLabeledNode(Map("name" -> "Jacob"), "Person")
@@ -1007,7 +1007,7 @@ return b
     graph.createIndex("Person", "name")
 
     // when
-    val result = executeWithAllPlanners("MATCH (n:Person)-->() USING INDEX n:Person(name) WHERE n.name LIKE 'Jac%' RETURN n")
+    val result = executeWithAllPlanners("MATCH (n:Person)-->() USING INDEX n:Person(name) WHERE n.name STARTS WITH 'Jac' RETURN n")
 
     // then
     result.toList should equal (List(Map("n" -> jake)))
@@ -1159,7 +1159,7 @@ return b
     ))
   }
 
-  test("should use the index for property existence queries for cost when asked for it") {
+  test("should use the index for property existence queries (with has) for cost when asked for it") {
     // given
     val n = createLabeledNode(Map("email" -> "me@mine"), "User")
     val m = createLabeledNode(Map("email" -> "you@yours"), "User")
@@ -1168,6 +1168,36 @@ return b
 
     // when
     val result = executeWithCostPlannerOnly("MATCH (n:User) USING INDEX n:User(email) WHERE has(n.email) RETURN n")
+
+    // then
+    result.toList should equal(List(Map("n" -> n), Map("n" -> m)))
+    result.executionPlanDescription().toString should include("NodeIndexScan")
+  }
+
+  test("should use the index for property existence queries (with exists) for cost when asked for it") {
+    // given
+    val n = createLabeledNode(Map("email" -> "me@mine"), "User")
+    val m = createLabeledNode(Map("email" -> "you@yours"), "User")
+    val p = createLabeledNode(Map("emailx" -> "youtoo@yours"), "User")
+    graph.createIndex("User", "email")
+
+    // when
+    val result = executeWithCostPlannerOnly("MATCH (n:User) USING INDEX n:User(email) WHERE exists(n.email) RETURN n")
+
+    // then
+    result.toList should equal(List(Map("n" -> n), Map("n" -> m)))
+    result.executionPlanDescription().toString should include("NodeIndexScan")
+  }
+
+  test("should use the index for property existence queries (with IS NOT NULL) for cost when asked for it") {
+    // given
+    val n = createLabeledNode(Map("email" -> "me@mine"), "User")
+    val m = createLabeledNode(Map("email" -> "you@yours"), "User")
+    val p = createLabeledNode(Map("emailx" -> "youtoo@yours"), "User")
+    graph.createIndex("User", "email")
+
+    // when
+    val result = executeWithCostPlannerOnly("MATCH (n:User) USING INDEX n:User(email) WHERE n.email IS NOT NULL RETURN n")
 
     // then
     result.toList should equal(List(Map("n" -> n), Map("n" -> m)))
@@ -1183,7 +1213,7 @@ return b
     val p = createLabeledNode(Map("emailx" -> "youtoo@yours"), "User")
     graph.createIndex("User", "email")
     graph.createIndex("User", "name")
-    return Seq(n, m, p)
+    Seq(n, m, p)
   }
 
   test("should use the index for property existence queries when cardinality prefers it") {
@@ -2168,6 +2198,34 @@ return b
     val result = executeWithAllPlannersAndRuntimes("MATCH p,o,n,t,u,s RETURN p,o,n,t,u,s")
 
     result.columns should equal(List("p", "o", "n", "t", "u", "s"))
+  }
+
+  test("should be able to match on nodes with MANY labels") {
+    //given
+    val start = createLabeledNode('A' to 'M' map(_.toString):_* )
+    val end = createLabeledNode('U' to 'Z' map(_.toString):_* )
+    relate(start, end, "REL")
+
+    //when
+    val result = executeWithAllPlanners("match (n:A:B:C:D:E:F:G:H:I:J:K:L:M)-[:REL]->(m:Z:Y:X:W:V:U) return n,m")
+
+    //then
+    result.toList should equal(List(Map("n" -> start, "m" -> end)))
+  }
+
+  test("should be able to do varlength matches of sizes larger that 15 hops") {
+    //given
+    //({prop: "bar"})-[:R]->({prop: "bar"})…-[:R]->({prop: "foo"})
+    val start = createNode(Map("prop" -> "start"))
+    val end = createNode(Map("prop" -> "end"))
+    val nodes = start +: (for (i <- 1 to 15) yield createNode(Map("prop" -> "bar"))) :+ end
+    nodes.sliding(2).foreach {
+      case Seq(node1, node2) => relate(node1, node2, "R")
+    }
+
+    val result = executeWithAllPlanners("MATCH (n {prop: 'start'})-[:R*]->(m {prop: 'end'}) RETURN m")
+
+    result.toList should equal(List(Map("m" -> end)))
   }
 
   /**

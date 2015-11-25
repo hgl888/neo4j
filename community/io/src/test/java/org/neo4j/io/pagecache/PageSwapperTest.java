@@ -32,10 +32,12 @@ import java.nio.file.NoSuchFileException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -45,6 +47,7 @@ import org.neo4j.io.pagecache.impl.ByteBufferPage;
 import org.neo4j.test.TargetDirectory;
 
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.isOneOf;
 import static org.hamcrest.Matchers.sameInstance;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThat;
@@ -94,6 +97,18 @@ public abstract class PageSwapperTest
         }
     }
 
+    protected PageSwapper createSwapper(
+            PageSwapperFactory swapperFactory,
+            File file,
+            int filePageSize,
+            PageEvictionCallback callback,
+            boolean createIfNotExist ) throws IOException
+    {
+        PageSwapper swapper = swapperFactory.createPageSwapper( file, filePageSize, callback, createIfNotExist );
+        openedSwappers.add( swapper );
+        return swapper;
+    }
+
     private File file( String filename ) throws IOException
     {
         File file = testDir.file( filename );
@@ -104,11 +119,42 @@ public abstract class PageSwapperTest
     @Rule
     public final TargetDirectory.TestDirectory testDir = TargetDirectory.testDirForTest( getClass() );
 
+    private final ConcurrentLinkedQueue<PageSwapper> openedSwappers = new ConcurrentLinkedQueue<>();
+
     @Before
     @After
     public void clearStrayInterrupts()
     {
         Thread.interrupted();
+    }
+
+    @After
+    public void closeOpenedPageSwappers() throws IOException
+    {
+        IOException exception = null;
+        PageSwapper swapper;
+        while ( (swapper = openedSwappers.poll()) != null )
+        {
+            try
+            {
+                swapper.close();
+            }
+            catch ( IOException e )
+            {
+                if ( exception == null )
+                {
+                    exception = e;
+                }
+                else
+                {
+                    exception.addSuppressed( e );
+                }
+            }
+        }
+        if ( exception != null )
+        {
+            throw exception;
+        }
     }
 
     @Test
@@ -119,7 +165,7 @@ public abstract class PageSwapperTest
         ByteBufferPage page = createPage();
         page.putInt( 1, 0 );
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
 
         assertThat( swapper.write( 0, page ), is( sizeOf( page ) ) );
                 page.putInt( 0, 0 );
@@ -147,7 +193,7 @@ public abstract class PageSwapperTest
         ByteBufferPage page = createPage();
         page.putInt( 1, 0 );
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
 
         assertThat( swapper.write( 0, page ), is( sizeOf( page ) ) );
                 page.putInt( 0, 0 );
@@ -170,7 +216,7 @@ public abstract class PageSwapperTest
         ByteBufferPage page = createPage();
         page.putInt( 1, 0 );
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
 
         Thread.currentThread().interrupt();
 
@@ -197,7 +243,7 @@ public abstract class PageSwapperTest
         ByteBufferPage page = createPage();
         page.putInt( 1, 0 );
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
 
         Thread.currentThread().interrupt();
 
@@ -222,7 +268,7 @@ public abstract class PageSwapperTest
         File file = file( "a" );
 
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
 
         Thread.currentThread().interrupt();
         swapper.force();
@@ -234,7 +280,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "a" );
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
 
         ByteBufferPage page = createPage();
         page.putLong( X, 0 );
@@ -262,7 +308,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "a" );
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
 
         ByteBufferPage page = createPage();
         page.putLong( X, 0 );
@@ -295,7 +341,7 @@ public abstract class PageSwapperTest
         File file = file( "a" );
 
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
 
         Thread.currentThread().interrupt();
 
@@ -324,7 +370,7 @@ public abstract class PageSwapperTest
         File file = file( "a" );
 
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
 
         Thread.currentThread().interrupt();
 
@@ -349,7 +395,7 @@ public abstract class PageSwapperTest
         File file = file( "a" );
 
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
 
         for ( int i = 0; i < 10; i++ )
         {
@@ -371,7 +417,7 @@ public abstract class PageSwapperTest
 
         ByteBufferPage page = createPage();
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
         swapper.write( 0, page );
         swapper.close();
 
@@ -394,7 +440,7 @@ public abstract class PageSwapperTest
 
         ByteBufferPage page = createPage();
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
         swapper.write( 0, page );
         swapper.close();
 
@@ -416,7 +462,7 @@ public abstract class PageSwapperTest
 
         ByteBufferPage page = createPage();
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
         swapper.close();
 
         try
@@ -437,7 +483,7 @@ public abstract class PageSwapperTest
 
         ByteBufferPage page = createPage();
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
         swapper.close();
 
         try
@@ -457,7 +503,7 @@ public abstract class PageSwapperTest
         File file = file( "a" );
 
         PageSwapperFactory swapperFactory = swapperFactory();
-        PageSwapper swapper = swapperFactory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( swapperFactory, file, cachePageSize(), NO_CALLBACK, true );
         swapper.close();
 
         try
@@ -478,9 +524,9 @@ public abstract class PageSwapperTest
         File fileB = file( "b" );
         PageSwapperFactory factory = swapperFactory();
         PageSwapper swapperA =
-                factory.createPageSwapper( fileA, cachePageSize(), NO_CALLBACK, true );
+                createSwapper( factory, fileA, cachePageSize(), NO_CALLBACK, true );
         PageSwapper swapperB =
-                factory.createPageSwapper( fileB, cachePageSize(), NO_CALLBACK, true );
+                createSwapper( factory, fileB, cachePageSize(), NO_CALLBACK, true );
 
         ByteBufferPage page = createPage();
         page.putLong( X, 0 );
@@ -511,7 +557,7 @@ public abstract class PageSwapperTest
         };
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, cachePageSize(), callback, true );
+        PageSwapper swapper = createSwapper( factory, file, cachePageSize(), callback, true );
         Page page = createPage();
         swapper.evicted( 42, page );
         assertThat( callbackFilePageId.get(), is( 42L ) );
@@ -532,7 +578,7 @@ public abstract class PageSwapperTest
         };
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, cachePageSize(), callback, true );
+        PageSwapper swapper = createSwapper( factory, file, cachePageSize(), callback, true );
         Page page = createPage();
         swapper.close();
         swapper.evicted( 42, page );
@@ -543,7 +589,7 @@ public abstract class PageSwapperTest
     public void mustThrowExceptionIfFileDoesNotExist() throws Exception
     {
         PageSwapperFactory factory = swapperFactory();
-        factory.createPageSwapper( file( "does not exist" ), cachePageSize(), NO_CALLBACK, false );
+        createSwapper( factory, file( "does not exist" ), cachePageSize(), NO_CALLBACK, false );
     }
 
     @Test
@@ -551,7 +597,7 @@ public abstract class PageSwapperTest
     {
         PageSwapperFactory factory = swapperFactory();
         PageSwapper pageSwapper =
-                factory.createPageSwapper( file( "does not exist" ), cachePageSize(), NO_CALLBACK, true );
+                createSwapper( factory, file( "does not exist" ), cachePageSize(), NO_CALLBACK, true );
 
         // After creating the file, we must also be able to read and write
         ByteBufferPage page = createPage();
@@ -569,7 +615,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, cachePageSize(), NO_CALLBACK, true );
 
         assertThat( swapper.getLastPageId(), is( -1L ) );
 
@@ -582,7 +628,7 @@ public abstract class PageSwapperTest
         assertThat( swapper.getLastPageId(), is( 10L ) );
 
         swapper.close();
-        swapper = factory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, false );
+        swapper = createSwapper( factory, file, cachePageSize(), NO_CALLBACK, false );
         clear( page );
         swapper.read( 10, page );
         assertThat( page.getInt( 0 ), is( 0xcafebabe ) );
@@ -595,7 +641,7 @@ public abstract class PageSwapperTest
         assertThat( swapper.getLastPageId(), is( -1L ) );
 
         swapper.close();
-        swapper = factory.createPageSwapper( file, cachePageSize(), NO_CALLBACK, false );
+        swapper = createSwapper( factory, file, cachePageSize(), NO_CALLBACK, false );
         clear( page );
         swapper.read( 10, page );
         assertThat( page.getInt( 0 ), is( 0 ) );
@@ -609,7 +655,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         ByteBufferPage pageA = createPage( 4 );
         ByteBufferPage pageB = createPage( 4 );
@@ -649,7 +695,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         ByteBufferPage output = createPage();
 
@@ -681,7 +727,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         ByteBufferPage page = createPage( 4 );
         page.putInt( 1, 0 );
@@ -694,7 +740,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         ByteBufferPage output = createPage( 4 );
         output.putInt( 0xFFFF_FFFF, 0 );
@@ -714,29 +760,29 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         ByteBufferPage output = createPage( 4 );
         output.putInt( 0xFFFF_FFFF, 0 );
         swapper.write( 0, new Page[]{output, output, output, output, output}, 0, 5 );
         swapper.close();
 
-        swapper = factory.createPageSwapper( file, 8, NO_CALLBACK, false );
+        swapper = createSwapper( factory, file, 8, NO_CALLBACK, false );
         ByteBufferPage pageA = createPage( 8 );
         ByteBufferPage pageB = createPage( 8 );
         pageA.putLong( X, 0 );
         pageB.putLong( Y, 0 );
-        assertThat( swapper.read( 1, new Page[]{pageA, pageB}, 0, 2 ), is( 12L ) );
+        assertThat( swapper.read( 1, new Page[]{pageA, pageB}, 0, 2 ), isOneOf( 12L, 16L ) );
         assertThat( pageA.getLong( 0 ), is( 0xFFFF_FFFF_FFFF_FFFFL ) );
         assertThat( pageB.getLong( 0 ), is( 0xFFFF_FFFF_0000_0000L ) );
     }
 
     @Test
-    public void positionedVectoredReadWhereSecondLastPageExtendBeyondEndOfFileMustHaveREstZeroFilled() throws Exception
+    public void positionedVectoredReadWhereSecondLastPageExtendBeyondEndOfFileMustHaveRestZeroFilled() throws Exception
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         ByteBufferPage output = createPage( 4 );
         output.putInt( 1, 0 );
@@ -747,14 +793,14 @@ public abstract class PageSwapperTest
         swapper.write( 2, output );
         swapper.close();
 
-        swapper = factory.createPageSwapper( file, 8, NO_CALLBACK, false );
+        swapper = createSwapper( factory, file, 8, NO_CALLBACK, false );
         ByteBufferPage pageA = createPage( 8 );
         ByteBufferPage pageB = createPage( 8 );
         ByteBufferPage pageC = createPage( 8 );
         pageA.putInt( -1, 0 );
         pageB.putInt( -1, 0 );
         pageC.putInt( -1, 0 );
-        assertThat( swapper.read( 0, new Page[]{pageA, pageB, pageC}, 0, 3 ), is( 12L ) );
+        assertThat( swapper.read( 0, new Page[]{pageA, pageB, pageC}, 0, 3 ), isOneOf( 12L, 16L ) );
         assertThat( pageA.getInt( 0 ), is( 1 ) );
         assertThat( pageA.getInt( 4 ), is( 2 ) );
         assertThat( pageB.getInt( 0 ), is( 3 ) );
@@ -767,7 +813,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        final PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        final PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
         final int pageCount = 100;
         final int iterations = 20000;
         final CountDownLatch startLatch = new CountDownLatch( 1 );
@@ -822,7 +868,16 @@ public abstract class PageSwapperTest
         };
 
         int threads = 8;
-        ExecutorService executor = Executors.newFixedThreadPool( threads );
+        ExecutorService executor = Executors.newFixedThreadPool( threads, new ThreadFactory()
+        {
+            @Override
+            public Thread newThread( Runnable r )
+            {
+                Thread thread = Executors.defaultThreadFactory().newThread( r );
+                thread.setDaemon( true );
+                return thread;
+            }
+        } );
         List<Future<Void>> futures = new ArrayList<>( threads );
         for ( int i = 0; i < threads; i++ )
         {
@@ -841,7 +896,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         ByteBufferPage pageA = createPage( 4 );
         ByteBufferPage pageB = createPage( 4 );
@@ -875,7 +930,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         ByteBufferPage pageA = createPage( 4 );
         ByteBufferPage pageB = createPage( 4 );
@@ -915,7 +970,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         ByteBufferPage page = createPage( 4 );
 
@@ -937,7 +992,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         ByteBufferPage page = createPage( 4 );
 
@@ -957,7 +1012,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         ByteBufferPage page = createPage( 4 );
 
@@ -979,7 +1034,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         try
         {
@@ -997,7 +1052,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         swapper.read( -1, createPage( 4 ) );
     }
@@ -1007,7 +1062,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         swapper.write( -1, createPage( 4 ) );
     }
@@ -1017,7 +1072,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         swapper.read( -1, new Page[]{createPage( 4 ), createPage( 4 )}, 0, 2 );
     }
@@ -1027,7 +1082,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         swapper.write( -1, new Page[] {createPage( 4 ), createPage( 4 )}, 0, 2 );
     }
@@ -1037,7 +1092,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         Page[] pages = {createPage( 4 ), createPage( 4 )};
         swapper.write( 0, pages, 0, 2 );
@@ -1049,7 +1104,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         Page[] pages = {createPage( 4 ), createPage( 4 )};
         swapper.write( 0, pages, -1, 2 );
@@ -1060,7 +1115,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         Page[] pages = {createPage( 4 ), createPage( 4 )};
         swapper.write( 0, pages, 0, 2 );
@@ -1072,7 +1127,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         Page[] pages = {createPage( 4 ), createPage( 4 )};
         swapper.write( 0, pages, 1, 2 );
@@ -1083,7 +1138,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         Page[] pages = {createPage( 4 ), createPage( 4 )};
         swapper.write( 0, pages, 0, 2 );
@@ -1095,7 +1150,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         Page[] pages = {createPage( 4 ), createPage( 4 )};
         swapper.write( 0, pages, 2, 1 );
@@ -1106,7 +1161,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         Page[] pages = {createPage( 4 ), createPage( 4 )};
         swapper.write( 0, pages, 0, 2 );
@@ -1118,7 +1173,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         Page[] pages = {createPage( 4 ), createPage( 4 )};
         swapper.write( 0, pages, 3, 1 );
@@ -1129,7 +1184,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         ByteBufferPage pageA = createPage( 4 );
         ByteBufferPage pageB = createPage( 4 );
@@ -1151,7 +1206,7 @@ public abstract class PageSwapperTest
     {
         File file = file( "file" );
         PageSwapperFactory factory = swapperFactory();
-        PageSwapper swapper = factory.createPageSwapper( file, 4, NO_CALLBACK, true );
+        PageSwapper swapper = createSwapper( factory, file, 4, NO_CALLBACK, true );
 
         ByteBufferPage pageA = createPage( 4 );
         ByteBufferPage pageB = createPage( 4 );

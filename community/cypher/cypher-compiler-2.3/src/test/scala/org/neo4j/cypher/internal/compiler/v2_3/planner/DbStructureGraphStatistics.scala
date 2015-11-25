@@ -21,7 +21,7 @@ package org.neo4j.cypher.internal.compiler.v2_3.planner
 
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.{Cardinality, Selectivity}
 import org.neo4j.cypher.internal.compiler.v2_3.spi.GraphStatistics
-import org.neo4j.cypher.internal.compiler.v2_3.{LabelId, NameId, PropertyKeyId, RelTypeId}
+import org.neo4j.cypher.internal.frontend.v2_3.{LabelId, NameId, PropertyKeyId, RelTypeId}
 import org.neo4j.kernel.impl.util.dbstructure.DbStructureLookup
 
 class DbStructureGraphStatistics(lookup: DbStructureLookup) extends GraphStatistics {
@@ -41,7 +41,7 @@ class DbStructureGraphStatistics(lookup: DbStructureLookup) extends GraphStatist
    */
   override def indexSelectivity( label: LabelId, property: PropertyKeyId ): Option[Selectivity] = {
     val result = lookup.indexSelectivity( label.id, property.id )
-    if (result.isNaN) None else Some(Selectivity(result))
+    Selectivity.of(result)
   }
 
   /*
@@ -51,6 +51,6 @@ class DbStructureGraphStatistics(lookup: DbStructureLookup) extends GraphStatist
    */
   override def indexPropertyExistsSelectivity( label: LabelId, property: PropertyKeyId ): Option[Selectivity] = {
     val result = lookup.indexPropertyExistsSelectivity( label.id, property.id )
-    if (result.isNaN) None else Some(Selectivity(result))
+    if (result.isNaN) None else Some(Selectivity.of(result).get)
   }
 }

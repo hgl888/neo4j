@@ -19,7 +19,11 @@
  */
 package org.neo4j.cypher.internal.compiler.v2_3.spi
 
-import org.neo4j.graphdb.{Relationship, PropertyContainer, Direction, Node}
+import java.net.URL
+
+import org.neo4j.cypher.internal.compiler.v2_3.pipes.matching.PatternNode
+import org.neo4j.cypher.internal.frontend.v2_3.SemanticDirection
+import org.neo4j.graphdb.{Path, Relationship, PropertyContainer, Node}
 import org.neo4j.kernel.api.index.IndexDescriptor
 
 class DelegatingQueryContext(inner: QueryContext) extends QueryContext {
@@ -42,6 +46,8 @@ class DelegatingQueryContext(inner: QueryContext) extends QueryContext {
 
   def createRelationship(start: Node, end: Node, relType: String): Relationship = singleDbHit(inner.createRelationship(start, end, relType))
 
+  override def createRelationship(start: Long, end: Long, relType: Int): Relationship = singleDbHit(inner.createRelationship(start, end, relType))
+
   def getOrCreateRelTypeId(relTypeName: String): Int = singleDbHit(inner.getOrCreateRelTypeId(relTypeName))
 
   def getLabelsForNode(node: Long): Iterator[Int] = singleDbHit(inner.getLabelsForNode(node))
@@ -54,7 +60,7 @@ class DelegatingQueryContext(inner: QueryContext) extends QueryContext {
 
   def getOrCreateLabelId(labelName: String): Int = singleDbHit(inner.getOrCreateLabelId(labelName))
 
-  def getRelationshipsForIds(node: Node, dir: Direction, types: Option[Seq[Int]]): Iterator[Relationship] = manyDbHits(inner.getRelationshipsForIds(node, dir, types))
+  def getRelationshipsForIds(node: Node, dir: SemanticDirection, types: Option[Seq[Int]]): Iterator[Relationship] = manyDbHits(inner.getRelationshipsForIds(node, dir, types))
 
   def nodeOps = inner.nodeOps
 
@@ -117,17 +123,28 @@ class DelegatingQueryContext(inner: QueryContext) extends QueryContext {
 
   def getRelTypeName(id: Int): String = singleDbHit(inner.getRelTypeName(id))
 
-  override def hasLocalFileAccess: Boolean = inner.hasLocalFileAccess
+  def getImportURL(url: URL): Either[String,URL] = inner.getImportURL(url)
 
   def relationshipStartNode(rel: Relationship) = inner.relationshipStartNode(rel)
 
   def relationshipEndNode(rel: Relationship) = inner.relationshipEndNode(rel)
 
-  def nodeGetDegree(node: Long, dir: Direction): Int = singleDbHit(inner.nodeGetDegree(node, dir))
+  def nodeGetDegree(node: Long, dir: SemanticDirection): Int = singleDbHit(inner.nodeGetDegree(node, dir))
 
-  def nodeGetDegree(node: Long, dir: Direction, relTypeId: Int): Int = singleDbHit(inner.nodeGetDegree(node, dir, relTypeId))
+  def nodeGetDegree(node: Long, dir: SemanticDirection, relTypeId: Int): Int = singleDbHit(inner.nodeGetDegree(node, dir, relTypeId))
 
   def nodeIsDense(node: Long): Boolean = singleDbHit(inner.nodeIsDense(node))
+
+  // Legacy dependency between kernel and compiler
+  override def variableLengthPathExpand(node: PatternNode,
+                                        realNode: Node,
+                                        minHops: Option[Int],
+                                        maxHops: Option[Int],
+                                        direction: SemanticDirection,
+                                        relTypes: Seq[String]): Iterator[Path] =
+    manyDbHits(inner.variableLengthPathExpand(node, realNode, minHops, maxHops, direction, relTypes))
+
+  override def isLabelSetOnNode(label: Int, node: Long): Boolean = getLabelsForNode(node).contains(label)
 }
 
 class DelegatingOperations[T <: PropertyContainer](protected val inner: Operations[T]) extends Operations[T] {

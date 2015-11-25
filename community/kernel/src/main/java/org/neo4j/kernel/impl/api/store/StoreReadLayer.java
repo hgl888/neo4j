@@ -36,6 +36,8 @@ import org.neo4j.kernel.api.exceptions.schema.SchemaRuleNotFoundException;
 import org.neo4j.kernel.api.exceptions.schema.TooManyLabelsException;
 import org.neo4j.kernel.api.index.IndexDescriptor;
 import org.neo4j.kernel.api.index.InternalIndexState;
+import org.neo4j.kernel.api.procedures.ProcedureDescriptor;
+import org.neo4j.kernel.api.procedures.ProcedureSignature.ProcedureName;
 import org.neo4j.kernel.api.properties.DefinedProperty;
 import org.neo4j.kernel.impl.api.KernelStatement;
 import org.neo4j.kernel.impl.api.RelationshipVisitor;
@@ -94,7 +96,7 @@ public interface StoreReadLayer
     PrimitiveLongIterator nodesGetFromIndexSeek( KernelStatement state, IndexDescriptor index, Object value )
             throws IndexNotFoundKernelException;
 
-    PrimitiveLongIterator nodesGetFromIndexRangeSeekByNumber( KernelStatement statement, IndexDescriptor index, Number lower, boolean includeLower, Number upper, boolean includeUpper )
+    PrimitiveLongIterator nodesGetFromInclusiveNumericIndexRangeSeek( KernelStatement statement, IndexDescriptor index, Number lower, Number upper )
             throws IndexNotFoundKernelException;
 
     PrimitiveLongIterator nodesGetFromIndexRangeSeekByString( KernelStatement statement, IndexDescriptor index, String lower, boolean includeLower, String upper, boolean includeUpper )
@@ -164,4 +166,10 @@ public interface StoreReadLayer
     long indexSize( IndexDescriptor descriptor ) throws IndexNotFoundKernelException;
 
     double indexUniqueValuesPercentage( IndexDescriptor descriptor ) throws IndexNotFoundKernelException;
+
+    /** Return descriptors for all committed stored procedures */
+    Iterator<ProcedureDescriptor> proceduresGetAll();
+
+    /** Return the description of the specified procedure */
+    ProcedureDescriptor procedureGet( ProcedureName name );
 }

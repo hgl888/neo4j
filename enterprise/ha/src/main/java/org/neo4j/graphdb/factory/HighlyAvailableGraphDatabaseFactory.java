@@ -22,26 +22,40 @@ package org.neo4j.graphdb.factory;
 import java.io.File;
 import java.util.Map;
 
+import org.neo4j.cluster.ClusterSettings;
 import org.neo4j.graphdb.GraphDatabaseService;
+import org.neo4j.kernel.ha.HaSettings;
 import org.neo4j.kernel.ha.HighlyAvailableGraphDatabase;
+
+import static java.util.Arrays.asList;
 
 /**
  * Factory for HA Neo4j instances.
  */
 public class HighlyAvailableGraphDatabaseFactory extends GraphDatabaseFactory
 {
+    public HighlyAvailableGraphDatabaseFactory()
+    {
+        super( highlyAvailableFactoryState() );
+    }
+
+    private static GraphDatabaseFactoryState highlyAvailableFactoryState()
+    {
+        GraphDatabaseFactoryState state = new GraphDatabaseFactoryState();
+        state.addSettingsClasses( asList( ClusterSettings.class, HaSettings.class ) );
+        return state;
+    }
+
     @Override
     protected GraphDatabaseBuilder.DatabaseCreator createDatabaseCreator(
             final File storeDir, final GraphDatabaseFactoryState state )
     {
         return new GraphDatabaseBuilder.DatabaseCreator()
         {
-
             @Override
             public GraphDatabaseService newDatabase( final Map<String, String> config )
             {
                 config.put( "ephemeral", "false" );
-
                 return new HighlyAvailableGraphDatabase( storeDir, config, state.databaseDependencies() );
             }
         };
@@ -52,6 +66,8 @@ public class HighlyAvailableGraphDatabaseFactory extends GraphDatabaseFactory
      *             {@link HighlyAvailableGraphDatabaseFactory#newEmbeddedDatabase(String)}
      *             you get an abstraction of this factory, so you can either use
      *             this factory or {@link GraphDatabaseFactory}.
+     * @param path Path to the new database
+     * @return a database service for the newly created database
      */
     @Deprecated
     public GraphDatabaseService newHighlyAvailableDatabase( final String path )
@@ -64,6 +80,8 @@ public class HighlyAvailableGraphDatabaseFactory extends GraphDatabaseFactory
      *             {@link HighlyAvailableGraphDatabaseFactory#newEmbeddedDatabaseBuilder(String)}
      *             you get an abstraction of this factory, so you can either use
      *             this factory or {@link GraphDatabaseFactory}.
+     * @param path Path to the new database
+     * @return a database service for the newly created database
      */
     @Deprecated
     public GraphDatabaseBuilder newHighlyAvailableDatabaseBuilder( final String path )

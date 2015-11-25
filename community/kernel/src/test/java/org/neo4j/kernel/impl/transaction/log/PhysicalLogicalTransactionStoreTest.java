@@ -19,16 +19,17 @@
  */
 package org.neo4j.kernel.impl.transaction.log;
 
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
 
 import org.neo4j.helpers.collection.CloseableVisitor;
 import org.neo4j.helpers.collection.Visitor;
@@ -41,8 +42,8 @@ import org.neo4j.kernel.impl.transaction.DeadSimpleTransactionIdStore;
 import org.neo4j.kernel.impl.transaction.TransactionRepresentation;
 import org.neo4j.kernel.impl.transaction.command.Command;
 import org.neo4j.kernel.impl.transaction.log.PhysicalLogFile.Monitor;
-import org.neo4j.kernel.impl.transaction.state.RecoverableTransaction;
 import org.neo4j.kernel.impl.transaction.log.entry.VersionAwareLogEntryReader;
+import org.neo4j.kernel.impl.transaction.state.RecoverableTransaction;
 import org.neo4j.kernel.impl.transaction.tracing.LogAppendEvent;
 import org.neo4j.kernel.lifecycle.LifeSupport;
 import org.neo4j.kernel.monitoring.Monitors;
@@ -54,11 +55,11 @@ import static org.hamcrest.CoreMatchers.equalTo;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
-
 import static org.neo4j.kernel.impl.transaction.log.PhysicalLogFile.DEFAULT_NAME;
 import static org.neo4j.kernel.impl.transaction.log.entry.LogVersions.CURRENT_LOG_VERSION;
 import static org.neo4j.kernel.impl.transaction.log.rotation.LogRotation.NO_ROTATION;
@@ -134,14 +135,14 @@ public class PhysicalLogicalTransactionStoreTest
         }
 
         life = new LifeSupport();
+        final AtomicBoolean recoveryRequiredCalled = new AtomicBoolean();
         FakeRecoveryVisitor visitor = new FakeRecoveryVisitor( additionalHeader, masterId,
                 authorId, timeStarted, timeCommitted, latestCommittedTxWhenStarted );
         final LogFileRecoverer recoverer = new LogFileRecoverer( new VersionAwareLogEntryReader<>(), visitor );
         logFile = life.add( new PhysicalLogFile( fs, logFiles, 1000, transactionIdStore, mock( LogVersionRepository.class ), monitor, positionCache ) );
 
-        TransactionAppender appender = new BatchingTransactionAppender( logFile, NO_ROTATION, positionCache,
-                transactionIdStore, BYPASS, kernelHealth );
-        life.add( appender );
+        life.add( new BatchingTransactionAppender( logFile, NO_ROTATION, positionCache,
+                transactionIdStore, BYPASS, kernelHealth ) );
 
         life.add( new Recovery( new Recovery.SPI()
         {
@@ -201,6 +202,12 @@ public class PhysicalLogicalTransactionStoreTest
             {
                 return LogPosition.start( 0 );
             }
+
+            @Override
+            public void recoveryRequired()
+            {
+                recoveryRequiredCalled.set( true );
+            }
         }, mock(Recovery.Monitor.class)));
 
         // WHEN
@@ -215,6 +222,7 @@ public class PhysicalLogicalTransactionStoreTest
 
         // THEN
         assertEquals( 1, visitor.getVisitedTransactions() );
+        assertTrue( recoveryRequiredCalled.get() );
     }
 
     @Test

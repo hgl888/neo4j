@@ -19,15 +19,14 @@
  */
 package org.neo4j.cypher.internal.compiler.v2_3.pipes
 
-import org.neo4j.cypher.internal.compiler.v2_3.LabelId
-import org.neo4j.cypher.internal.compiler.v2_3.ast.LabelName
-import org.neo4j.cypher.internal.compiler.v2_3.planner.SemanticTable
-import org.neo4j.cypher.internal.compiler.v2_3.spi.QueryContext
+import org.neo4j.cypher.internal.frontend.v2_3.ast.LabelName
+import org.neo4j.cypher.internal.compiler.v2_3.spi.{TokenContext, QueryContext}
+import org.neo4j.cypher.internal.frontend.v2_3.{SemanticTable, LabelId}
 
 case class LazyLabel(name:String) {
   private var id : Option[LabelId] = None
 
-  def id(context: QueryContext): Option[LabelId] = id match {
+  def id(context: TokenContext): Option[LabelId] = id match {
     case None => {
       id = context.getOptLabelId(name).map(LabelId)
       id

@@ -20,6 +20,7 @@
 package org.neo4j.cypher.internal.compiler.v2_3
 
 import java.lang.{Iterable => JIterable}
+import java.util
 import java.util.{Iterator => JIterator}
 
 import org.junit.Assert._
@@ -34,7 +35,9 @@ import org.neo4j.cypher.internal.compiler.v2_3.commands.predicates.{GreaterThan,
 import org.neo4j.cypher.internal.compiler.v2_3.pipes._
 import org.neo4j.cypher.internal.compiler.v2_3.pipes.matching._
 import org.neo4j.cypher.internal.compiler.v2_3.planDescription.Argument
-import org.neo4j.cypher.internal.compiler.v2_3.symbols.CTInteger
+import org.neo4j.cypher.internal.frontend.v2_3.SemanticDirection
+import org.neo4j.cypher.internal.frontend.v2_3.symbols.CTInteger
+import org.neo4j.cypher.internal.spi.v2_3.MonoDirectionalTraversalMatcher
 import org.neo4j.cypher.internal.{ExecutionPlan, CypherCompiler => Compiler}
 import org.neo4j.graphdb.Traverser.Order
 import org.neo4j.graphdb._
@@ -91,7 +94,7 @@ class LazyTest extends ExecutionEngineFunSuite {
     val limiter = new Limiter(2)
     val monitoredNode = new MonitoredNode(aNode, limiter.monitor)
 
-    val step = SingleStep(0, Seq(), Direction.OUTGOING, None, True(), True())
+    val step = SingleStep(0, Seq(), SemanticDirection.OUTGOING, None, True(), True())
     val producer = EntityProducer[Node]("test", mock[Argument]) { (ctx, state) => Iterator(monitoredNode) }
     val matcher = new MonoDirectionalTraversalMatcher(step, producer)
     val ctx = ExecutionContext().newWith("a" -> monitoredNode)
@@ -269,7 +272,7 @@ class LazyTest extends ExecutionEngineFunSuite {
     val monitoredNode = new MonitoredNode(aNode, limiter.monitor)
 
     val end = EndPoint("b")
-    val trail = SingleStepTrail(end, Direction.OUTGOING, "r", Seq(), "a", True(), True(), null, Seq())
+    val trail = SingleStepTrail(end, SemanticDirection.OUTGOING, "r", Seq(), "a", True(), True(), null, Seq())
     val step = trail.toSteps(0).get
     val producer = EntityProducer[Node]("test", mock[Argument]) { (ctx, state) => Iterator(monitoredNode) }
     val matcher = new MonoDirectionalTraversalMatcher(step, producer)
@@ -375,6 +378,10 @@ class MonitoredNode(inner: Node, monitor: () => Unit) extends Node {
   def removeProperty(key: String): AnyRef = null
 
   def getPropertyKeys: JIterable[String] = null
+
+  def getProperties( keys: String* ): util.Map[String, AnyRef] = null
+
+  def getAllProperties: util.Map[String, AnyRef] = null
 
   override def toString = "°" + inner.toString + "°"
 

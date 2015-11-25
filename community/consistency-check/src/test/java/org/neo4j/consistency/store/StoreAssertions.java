@@ -41,20 +41,11 @@ public class StoreAssertions
 
     public static void assertConsistentStore( File dir ) throws ConsistencyCheckIncompleteException, IOException
     {
-        final Config configuration =
-                new Config(
-                        stringMap( GraphDatabaseSettings.pagecache_memory.name(), "8m" ),
-                        GraphDatabaseSettings.class,
-                        ConsistencyCheckSettings.class
-                );
+        final Config configuration = new Config( stringMap( GraphDatabaseSettings.pagecache_memory.name(), "8m" ),
+                GraphDatabaseSettings.class, ConsistencyCheckSettings.class );
 
-        final ConsistencyCheckService.Result result =
-                new ConsistencyCheckService().runFullConsistencyCheck(
-                        dir,
-                        configuration,
-                        ProgressMonitorFactory.NONE,
-                        NullLogProvider.getInstance()
-                );
+        final ConsistencyCheckService.Result result = new ConsistencyCheckService().runFullConsistencyCheck(
+                dir, configuration, ProgressMonitorFactory.NONE, NullLogProvider.getInstance(), false );
 
         assertTrue( result.isSuccessful() );
     }

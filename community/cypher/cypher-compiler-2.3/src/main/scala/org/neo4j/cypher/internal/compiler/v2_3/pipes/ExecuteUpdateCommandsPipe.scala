@@ -24,7 +24,8 @@ import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions.Identifier
 import org.neo4j.cypher.internal.compiler.v2_3.executionplan.Effects._
 import org.neo4j.cypher.internal.compiler.v2_3.helpers.CollectionSupport
 import org.neo4j.cypher.internal.compiler.v2_3.mutation._
-import org.neo4j.cypher.internal.compiler.v2_3.symbols._
+import org.neo4j.cypher.internal.compiler.v2_3.symbols.SymbolTable
+import org.neo4j.cypher.internal.frontend.v2_3.{InternalException, ParameterWrongTypeException, SyntaxException}
 import org.neo4j.graphdb.NotInTransactionException
 
 import scala.collection.mutable
@@ -90,7 +91,7 @@ trait NoLushEntityCreation {
       Seq(NamedExpectation(key, props, Seq.empty)) ++ extractIfEntity(from) ++ extractIfEntity(to)
     case CreateUniqueAction(links@_*) =>
       links.flatMap(l => Seq(l.start, l.end, l.rel))
-    case MergePatternAction(_, _, _, Some(updates), _) =>
+    case MergePatternAction(_, _, _, _, Some(updates), _) =>
       updates.flatMap(extractEntities)
     case _ =>
       Seq()

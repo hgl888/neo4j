@@ -60,18 +60,17 @@ import org.neo4j.graphdb.index.IndexManager;
 import org.neo4j.helpers.collection.PrefetchingResourceIterator;
 import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.kernel.configuration.Config;
-import org.neo4j.kernel.impl.cache.LruCache;
 import org.neo4j.kernel.impl.factory.GraphDatabaseFacadeFactory;
 import org.neo4j.kernel.impl.index.IndexConfigStore;
 import org.neo4j.kernel.impl.index.IndexEntityType;
-import org.neo4j.kernel.lifecycle.Lifecycle;
+import org.neo4j.kernel.lifecycle.LifecycleAdapter;
 
 import static org.neo4j.index.impl.lucene.MultipleBackupDeletionPolicy.SNAPSHOT_ID;
 
 /**
  * An DataSource optimized for the {@link LuceneIndexImplementation}.
  */
-public class LuceneDataSource implements Lifecycle
+public class LuceneDataSource extends LifecycleAdapter
 {
     private final File storeDir;
     private final Config config;
@@ -123,7 +122,6 @@ public class LuceneDataSource implements Lifecycle
     final IndexConfigStore indexStore;
     private IndexTypeCache typeCache;
     private boolean closed;
-    private Cache caching;
     private LuceneFilesystemFacade filesystemFacade;
 
     /**
@@ -141,15 +139,9 @@ public class LuceneDataSource implements Lifecycle
     @Override
     public void init()
     {
-    }
-
-    @Override
-    public void start()
-    {
         this.filesystemFacade = config.get( Configuration.ephemeral ) ? LuceneFilesystemFacade.MEMORY
                 : LuceneFilesystemFacade.FS;
         indexSearchers = new IndexClockCache( config.get( Configuration.lucene_searcher_cache_size ) );
-        caching = new Cache();
         this.baseStorePath = this.filesystemFacade.ensureDirectoryExists( fileSystemAbstraction,
                 baseDirectory( storeDir ) );
         this.filesystemFacade.cleanWriteLocks( baseStorePath );
@@ -168,7 +160,7 @@ public class LuceneDataSource implements Lifecycle
     }
 
     @Override
-    public void stop() throws IOException
+    public void shutdown() throws IOException
     {
         synchronized ( this )
         {
@@ -183,11 +175,6 @@ public class LuceneDataSource implements Lifecycle
             }
             indexSearchers.clear();
         }
-    }
-
-    @Override
-    public void shutdown()
-    {
     }
 
     private synchronized IndexReference[] getAllIndexes()
@@ -206,7 +193,8 @@ public class LuceneDataSource implements Lifecycle
             }
             catch ( IOException e )
             {
-                throw new RuntimeException( "unable to commit changes to " + index.getIdentifier(), e );
+                throw new RuntimeException( "Unable to commit changes to " + index.getIdentifier() + " in " +
+                        config.get( GraphDatabaseSettings.store_dir ).getAbsolutePath(), e );
             }
         }
     }
@@ -386,7 +374,6 @@ public class LuceneDataSource implements Lifecycle
     {
         closeIndex( identifier );
         deleteFileOrDirectory( getFileDirectory( baseStorePath, identifier ) );
-        invalidateCache( identifier );
         boolean removeFromIndexStore =
                 !recovery || (indexStore.has( identifier.entityType.entityClass(), identifier.indexName ));
         if ( removeFromIndexStore )
@@ -500,25 +487,6 @@ public class LuceneDataSource implements Lifecycle
         }
     }
 
-    LruCache<String, Collection<EntityId>> getFromCache( IndexIdentifier identifier, String key )
-    {
-        return caching.get( identifier, key );
-    }
-
-    void invalidateCache( IndexIdentifier identifier, String key, Object value )
-    {
-        LruCache<String, Collection<EntityId>> cache = caching.get( identifier, key );
-        if ( cache != null )
-        {
-            cache.remove( value.toString() );
-        }
-    }
-
-    void invalidateCache( IndexIdentifier identifier )
-    {
-        this.caching.disable( identifier );
-    }
-
     public ResourceIterator<File> listStoreFiles( boolean includeLogicalLogs ) throws IOException
     { // Never include logical logs since they are of little importance
         final Collection<File> files = new ArrayList<>();
@@ -529,25 +497,30 @@ public class LuceneDataSource implements Lifecycle
             SnapshotDeletionPolicy deletionPolicy = (SnapshotDeletionPolicy) writer.getWriter().getConfig()
                     .getIndexDeletionPolicy();
             File indexDirectory = getFileDirectory( baseStorePath, writer.getIdentifier() );
+            IndexCommit commit;
             try
             {
                 // Throws IllegalStateException if no commits yet
-                IndexCommit commit = deletionPolicy.snapshot( SNAPSHOT_ID );
-                for ( String fileName : commit.getFileNames() )
-                {
-                    files.add( new File( indexDirectory, fileName ) );
-                }
-                snapshots.add( deletionPolicy );
+                commit = deletionPolicy.snapshot( SNAPSHOT_ID );
             }
             catch ( IllegalStateException e )
             {
-                // TODO Review this
                 /*
                  * This is insane but happens if we try to snapshot an existing index
                  * that has no commits. This is a bad API design - it should return null
                  * or something. This is not exceptional.
+                 *
+                 * For the time being we just do a commit and try again.
                  */
+                writer.getWriter().commit();
+                commit = deletionPolicy.snapshot( SNAPSHOT_ID );
             }
+
+            for ( String fileName : commit.getFileNames() )
+            {
+                files.add( new File( indexDirectory, fileName ) );
+            }
+            snapshots.add( deletionPolicy );
         }
         return new PrefetchingResourceIterator<File>()
         {
@@ -605,7 +578,7 @@ public class LuceneDataSource implements Lifecycle
         }
     }
 
-    private static enum LuceneFilesystemFacade
+    private enum LuceneFilesystemFacade
     {
         FS
         {

@@ -32,6 +32,7 @@ public class DelegatingRecordStore<R extends AbstractBaseRecord> implements Reco
     {
         this.delegate = delegate;
     }
+
     @Override
     public String toString()
     {
@@ -66,12 +67,6 @@ public class DelegatingRecordStore<R extends AbstractBaseRecord> implements Reco
     public R getRecord( long id )
     {
         return delegate.getRecord( id );
-    }
-
-    @Override
-    public long getNextRecordReference( R record )
-    {
-        return delegate.getNextRecordReference( record );
     }
 
     @Override
@@ -111,6 +106,12 @@ public class DelegatingRecordStore<R extends AbstractBaseRecord> implements Reco
     }
 
     @Override
+    public int getRecordsPerPage()
+    {
+        return delegate.getRecordsPerPage();
+    }
+
+    @Override
     public int getRecordHeaderSize()
     {
         return delegate.getRecordHeaderSize();
@@ -120,6 +121,12 @@ public class DelegatingRecordStore<R extends AbstractBaseRecord> implements Reco
     public void close()
     {
         delegate.close();
+    }
+
+    @Override
+    public void flush()
+    {
+        delegate.flush();
     }
 
     @Override

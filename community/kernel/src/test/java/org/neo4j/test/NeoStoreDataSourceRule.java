@@ -38,13 +38,14 @@ import org.neo4j.kernel.impl.api.SchemaWriteGuard;
 import org.neo4j.kernel.impl.api.index.IndexingService;
 import org.neo4j.kernel.impl.api.scan.InMemoryLabelScanStore;
 import org.neo4j.kernel.impl.api.scan.LabelScanStoreProvider;
+import org.neo4j.kernel.impl.constraints.ConstraintSemantics;
 import org.neo4j.kernel.impl.core.KernelPanicEventGenerator;
 import org.neo4j.kernel.impl.core.LabelTokenHolder;
 import org.neo4j.kernel.impl.core.NodeManager;
 import org.neo4j.kernel.impl.core.PropertyKeyTokenHolder;
 import org.neo4j.kernel.impl.core.RelationshipTypeTokenHolder;
 import org.neo4j.kernel.impl.core.StartupStatisticsProvider;
-import org.neo4j.kernel.impl.factory.CommunityEditionModule;
+import org.neo4j.kernel.impl.factory.CommunityCommitProcessFactory;
 import org.neo4j.kernel.impl.locking.Locks;
 import org.neo4j.kernel.impl.store.StoreFactory;
 import org.neo4j.kernel.impl.storemigration.StoreUpgrader;
@@ -64,26 +65,26 @@ import static org.neo4j.helpers.collection.MapUtil.stringMap;
 
 public class NeoStoreDataSourceRule extends ExternalResource
 {
-    private NeoStoreDataSource theDs;
+    private NeoStoreDataSource dataSource;
 
     public NeoStoreDataSource getDataSource( File storeDir, FileSystemAbstraction fs,
                                              PageCache pageCache, Map<String, String> additionalConfig, KernelHealth kernelHealth )
     {
-        if ( theDs != null )
+        if ( dataSource != null )
         {
-            theDs.stop();
-            theDs.shutdown();
+            dataSource.stop();
+            dataSource.shutdown();
         }
         final Config config = new Config( stringMap( additionalConfig ),
                 GraphDatabaseSettings.class );
 
         StoreFactory sf = new StoreFactory( storeDir, config, new DefaultIdGeneratorFactory( fs ), pageCache, fs,
-                NullLogProvider.getInstance(), new Monitors() );
+                NullLogProvider.getInstance() );
 
         Locks locks = mock( Locks.class );
         when( locks.newClient() ).thenReturn( mock( Locks.Client.class ) );
 
-        theDs = new NeoStoreDataSource( storeDir, config, sf, NullLogProvider.getInstance(),
+        dataSource = new NeoStoreDataSource( storeDir, config, sf, NullLogProvider.getInstance(),
                 mock( JobScheduler.class, RETURNS_MOCKS ), mock( TokenNameLookup.class ),
                 dependencyResolverForNoIndexProvider(), mock( PropertyKeyTokenHolder.class ),
                 mock( LabelTokenHolder.class ), mock( RelationshipTypeTokenHolder.class ), locks,
@@ -91,10 +92,10 @@ public class NeoStoreDataSourceRule extends ExternalResource
                 fs, mock( StoreUpgrader.class ), mock( TransactionMonitor.class ), kernelHealth,
                 mock( PhysicalLogFile.Monitor.class ), TransactionHeaderInformationFactory.DEFAULT,
                 new StartupStatisticsProvider(), mock( NodeManager.class ), null, null,
-                CommunityEditionModule.createCommitProcessFactory(), mock( PageCache.class ),
-                new Monitors(), new Tracers( "null", NullLog.getInstance() ) );
+                new CommunityCommitProcessFactory(), mock( PageCache.class ),
+                mock( ConstraintSemantics.class), new Monitors(), new Tracers( "null", NullLog.getInstance() ) );
 
-        return theDs;
+        return dataSource;
     }
 
     public NeoStoreDataSource getDataSource( File storeDir, FileSystemAbstraction fs,

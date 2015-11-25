@@ -19,12 +19,12 @@
  */
 package org.neo4j.cypher.internal.compiler.v2_3.planner.logical.plans
 
-import org.neo4j.cypher.internal.compiler.v2_3.ast._
-import org.neo4j.cypher.internal.compiler.v2_3.functions
+import org.neo4j.cypher.internal.frontend.v2_3.ast._
+import org.neo4j.cypher.internal.frontend.v2_3.ast.functions
 import org.neo4j.cypher.internal.compiler.v2_3.planner.BeLikeMatcher._
 import org.neo4j.cypher.internal.compiler.v2_3.planner._
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.steps.indexScanLeafPlanner
-import org.neo4j.cypher.internal.compiler.v2_3.test_helpers.CypherFunSuite
+import org.neo4j.cypher.internal.frontend.v2_3.test_helpers.CypherFunSuite
 
 class IndexScanLeafPlannerTest extends CypherFunSuite with LogicalPlanningTestSupport2 {
 
@@ -32,9 +32,8 @@ class IndexScanLeafPlannerTest extends CypherFunSuite with LogicalPlanningTestSu
   val hasLabels: Expression = HasLabels(ident("n"), Seq(LabelName("Awesome")_))_
   val property: Expression = Property(ident("n"), PropertyKeyName("prop") _)_
 
-  val hasPredicate: Expression = FunctionInvocation(FunctionName(functions.Has.name) _, property)_
-  val likePredicate: Expression = Like(property, LikePattern(StringLiteral("%")_), caseInsensitive = false)_
-  val iLikePredicate: Expression = Like(property, LikePattern(StringLiteral("%")_), caseInsensitive = true)_
+  val existsPredicate: Expression = FunctionInvocation(FunctionName(functions.Exists.name) _, property)_
+  val startsWithPredicate: Expression = StartsWith(property, StringLiteral("")_)_
   val ltPredicate: Expression = LessThan(property, SignedDecimalIntegerLiteral("12")_)_
   val neqPredicate: Expression = NotEquals(property, SignedDecimalIntegerLiteral("12")_)_
   val eqPredicate: Expression = Equals(property, SignedDecimalIntegerLiteral("12")_)_
@@ -42,7 +41,7 @@ class IndexScanLeafPlannerTest extends CypherFunSuite with LogicalPlanningTestSu
 
   test("does not plan index scan when no index exist") {
     new given {
-      qg = queryGraph(hasPredicate, hasLabels)
+      qg = queryGraph(existsPredicate, hasLabels)
     }.withLogicalPlanningContext { (cfg, ctx) =>
       // when
       val resultPlans = indexScanLeafPlanner(cfg.qg)(ctx)
@@ -54,7 +53,7 @@ class IndexScanLeafPlannerTest extends CypherFunSuite with LogicalPlanningTestSu
 
   test("index scan when there is an index on the property") {
     new given {
-      qg = queryGraph(hasPredicate, hasLabels)
+      qg = queryGraph(existsPredicate, hasLabels)
 
       indexOn("Awesome", "prop")
     }.withLogicalPlanningContext { (cfg, ctx) =>
@@ -66,12 +65,11 @@ class IndexScanLeafPlannerTest extends CypherFunSuite with LogicalPlanningTestSu
         case Seq(NodeIndexScan(`idName`, _, _, _)) =>  ()
       }
     }
-
   }
 
   test("unique index scan when there is an unique index on the property") {
     new given {
-      qg = queryGraph(hasPredicate, hasLabels)
+      qg = queryGraph(existsPredicate, hasLabels)
 
       uniqueIndexOn("Awesome", "prop")
     }.withLogicalPlanningContext { (cfg, ctx) =>
@@ -86,10 +84,10 @@ class IndexScanLeafPlannerTest extends CypherFunSuite with LogicalPlanningTestSu
   }
 
   test("plans index scans such that it solves hints") {
-    val hint: UsingIndexHint = UsingIndexHint(ident("n"), LabelName("Awesome")_, ident("prop"))_
+    val hint: UsingIndexHint = UsingIndexHint(ident("n"), LabelName("Awesome")_, PropertyKeyName("prop")(pos))_
 
     new given {
-      qg = queryGraph(hasPredicate, hasLabels).addHints(Some(hint))
+      qg = queryGraph(existsPredicate, hasLabels).addHints(Some(hint))
 
       indexOn("Awesome", "prop")
     }.withLogicalPlanningContext { (cfg, ctx) =>
@@ -108,10 +106,10 @@ class IndexScanLeafPlannerTest extends CypherFunSuite with LogicalPlanningTestSu
   }
 
   test("plans unique index scans such that it solves hints") {
-    val hint: UsingIndexHint = UsingIndexHint(ident("n"), LabelName("Awesome")_, ident("prop"))_
+    val hint: UsingIndexHint = UsingIndexHint(ident("n"), LabelName("Awesome")_, PropertyKeyName("prop")(pos))_
 
     new given {
-      qg = queryGraph(hasPredicate, hasLabels).addHints(Some(hint))
+      qg = queryGraph(existsPredicate, hasLabels).addHints(Some(hint))
 
       uniqueIndexOn("Awesome", "prop")
     }.withLogicalPlanningContext { (cfg, ctx) =>
@@ -129,10 +127,10 @@ class IndexScanLeafPlannerTest extends CypherFunSuite with LogicalPlanningTestSu
     }
   }
 
-  test("plans index scans for: n.prop LIKE <pattern>") {
+  test("plans index scans for: n.prop STARTS WITH <pattern>") {
     new given {
       new given {
-        qg = queryGraph(likePredicate, hasLabels)
+        qg = queryGraph(startsWithPredicate, hasLabels)
         indexOn("Awesome", "prop")
       }.withLogicalPlanningContext { (cfg, ctx) =>
         // when
@@ -143,28 +141,7 @@ class IndexScanLeafPlannerTest extends CypherFunSuite with LogicalPlanningTestSu
           case Seq(plan @ NodeIndexScan(`idName`, _, _, _)) =>
             plan.solved should beLike {
               case PlannerQuery(scanQG, _, _) =>
-                scanQG.selections.predicates.map(_.expr) should equal(Set(PartialPredicate(hasPredicate, likePredicate)))
-            }
-        }
-      }
-    }
-  }
-
-  test("plans index scans for: n.prop ILIKE <pattern>") {
-    new given {
-      new given {
-        qg = queryGraph(iLikePredicate, hasLabels)
-        indexOn("Awesome", "prop")
-      }.withLogicalPlanningContext { (cfg, ctx) =>
-        // when
-        val resultPlans = indexScanLeafPlanner(cfg.qg)(ctx)
-
-        // then
-        resultPlans should beLike {
-          case Seq(plan @ NodeIndexScan(`idName`, _, _, _)) =>
-            plan.solved should beLike {
-              case PlannerQuery(scanQG, _, _) =>
-                scanQG.selections.predicates.map(_.expr) should equal(Set(PartialPredicate(hasPredicate, likePredicate)))
+                scanQG.selections.predicates.map(_.expr) should equal(Set(PartialPredicate(existsPredicate, startsWithPredicate)))
             }
         }
       }
@@ -185,7 +162,7 @@ class IndexScanLeafPlannerTest extends CypherFunSuite with LogicalPlanningTestSu
           case Seq(plan @ NodeIndexScan(`idName`, _, _, _)) =>
             plan.solved should beLike {
               case PlannerQuery(scanQG, _, _) =>
-                scanQG.selections.predicates.map(_.expr) should equal(Set(PartialPredicate(hasPredicate, ltPredicate)))
+                scanQG.selections.predicates.map(_.expr) should equal(Set(PartialPredicate(existsPredicate, ltPredicate)))
             }
         }
       }
@@ -206,7 +183,7 @@ class IndexScanLeafPlannerTest extends CypherFunSuite with LogicalPlanningTestSu
           case Seq(plan@NodeIndexScan(`idName`, _, _, _)) =>
             plan.solved should beLike {
               case PlannerQuery(scanQG, _, _) =>
-                scanQG.selections.predicates.map(_.expr) should equal(Set(PartialPredicate(hasPredicate, neqPredicate)))
+                scanQG.selections.predicates.map(_.expr) should equal(Set(PartialPredicate(existsPredicate, neqPredicate)))
             }
         }
       }
@@ -227,7 +204,7 @@ class IndexScanLeafPlannerTest extends CypherFunSuite with LogicalPlanningTestSu
           case Seq(plan @ NodeIndexScan(`idName`, _, _, _)) =>
             plan.solved should beLike {
               case PlannerQuery(scanQG, _, _) =>
-                scanQG.selections.predicates.map(_.expr) should equal(Set(PartialPredicate(hasPredicate, eqPredicate)))
+                scanQG.selections.predicates.map(_.expr) should equal(Set(PartialPredicate(existsPredicate, eqPredicate)))
             }
         }
       }
@@ -248,7 +225,7 @@ class IndexScanLeafPlannerTest extends CypherFunSuite with LogicalPlanningTestSu
           case Seq(plan @ NodeIndexScan(`idName`, _, _, _)) =>
             plan.solved should beLike {
               case PlannerQuery(scanQG, _, _) =>
-                scanQG.selections.predicates.map(_.expr) should equal(Set(PartialPredicate(hasPredicate, regexPredicate)))
+                scanQG.selections.predicates.map(_.expr) should equal(Set(PartialPredicate(existsPredicate, regexPredicate)))
             }
         }
       }

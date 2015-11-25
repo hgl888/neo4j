@@ -19,8 +19,8 @@
  */
 package org.neo4j.cypher.internal.compiler.v2_3.docgen
 
-import org.neo4j.cypher.internal.compiler.v2_3.ast._
-import org.neo4j.cypher.internal.compiler.v2_3.perty.gen.DocHandlerTestSuite
+import org.neo4j.cypher.internal.frontend.v2_3.ast._
+import org.neo4j.cypher.internal.frontend.v2_3.perty.gen.DocHandlerTestSuite
 
 class AstPhraseDocGenTest extends DocHandlerTestSuite[ASTNode] with AstConstructionTestSupport {
 
@@ -87,7 +87,7 @@ class AstPhraseDocGenTest extends DocHandlerTestSuite[ASTNode] with AstConstruct
   }
 
   test("USING INDEX n:Person(name)") {
-    val astNode: ASTNode = UsingIndexHint(ident("n"), LabelName("Person")_, ident("name"))_
+    val astNode: ASTNode = UsingIndexHint(ident("n"), LabelName("Person")_, PropertyKeyName("name")(pos))_
     pprintToString(astNode) should equal("USING INDEX n:Person(name)")
   }
 

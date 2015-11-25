@@ -21,7 +21,6 @@ package org.neo4j.kernel.impl.transaction.tracing;
 
 public interface CheckPointTracer
 {
-
     CheckPointTracer NULL = new CheckPointTracer()
     {
         @Override

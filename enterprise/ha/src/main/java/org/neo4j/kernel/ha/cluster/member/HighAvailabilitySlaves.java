@@ -74,7 +74,7 @@ public class HighAvailabilitySlaves implements Lifecycle, Slaves
                     Slave presentSlave = slaves.get( from );
                     if ( presentSlave == null )
                     {
-                        presentSlave = life.add( slaveFactory.newSlave( from ) );
+                        presentSlave = slaveFactory.newSlave( life, from );
                         slaves.put( from, presentSlave );
                     }
                     return presentSlave;
@@ -89,9 +89,8 @@ public class HighAvailabilitySlaves implements Lifecycle, Slaves
         // Return all cluster members which are currently SLAVEs,
         // are alive, and convert to Slave with a cache if possible
         return map( withDefaults( slaveForMember(), Functions.map( slaves ) ),
-                filter( ClusterMembers.ALIVE,
                         filter( inRole( HighAvailabilityModeSwitcher.SLAVE ),
-                                clusterMembers.getMembers() ) ) );
+                                clusterMembers.getAliveMembers() ) );
     }
 
     @Override

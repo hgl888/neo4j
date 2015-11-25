@@ -19,13 +19,14 @@
  */
 package org.neo4j.cypher.internal.compiler.v2_3.planner.logical.plans
 
-import org.neo4j.cypher.internal.compiler.v2_3.ast.convert.commands.ExpressionConverters._
-import org.neo4j.cypher.internal.compiler.v2_3.ast.{Equals, _}
-import org.neo4j.cypher.internal.compiler.v2_3.commands.{ManyQueryExpression, QueryExpression, RangeQueryExpression, SingleQueryExpression}
 import org.neo4j.cypher.internal.compiler.v2_3._
+import org.neo4j.cypher.internal.compiler.v2_3.ast.convert.commands.ExpressionConverters._
+import org.neo4j.cypher.internal.compiler.v2_3.ast.{InequalitySeekRangeWrapper, PrefixSeekRangeWrapper}
+import org.neo4j.cypher.internal.compiler.v2_3.commands.{ManyQueryExpression, QueryExpression, RangeQueryExpression, SingleQueryExpression}
 import org.neo4j.cypher.internal.compiler.v2_3.helpers._
-import org.neo4j.cypher.internal.compiler.v2_3.parser.{LikePatternOp, LikePatternParser, MatchText, WildcardLikePatternOp}
 import org.neo4j.cypher.internal.compiler.v2_3.pipes.{ManySeekArgs, SeekArgs, SingleSeekArg}
+import org.neo4j.cypher.internal.frontend.v2_3.ast._
+import org.neo4j.cypher.internal.frontend.v2_3.{ExclusiveBound, InclusiveBound}
 
 object WithSeekableArgs {
   def unapply(v: Any) = v match {
@@ -59,7 +60,7 @@ object AsPropertyScannable {
   def unapply(v: Any): Option[Scannable[Expression]] = v match {
 
     case func@FunctionInvocation(_, _, IndexedSeq(property@Property(ident: Identifier, _)))
-      if func.function.contains(functions.Has) =>
+      if func.function.contains(functions.Exists) =>
       Some(ExplicitlyPropertyScannable(func, ident, property))
 
     case expr: Equals =>
@@ -68,8 +69,8 @@ object AsPropertyScannable {
     case expr: InequalityExpression =>
       partialPropertyPredicate(expr, expr.lhs)
 
-    case like: Like =>
-      partialPropertyPredicate(like, like.lhs)
+    case startsWith: StartsWith =>
+      partialPropertyPredicate(startsWith, startsWith.lhs)
 
     case regex: RegexMatch =>
       partialPropertyPredicate(regex, regex.lhs)
@@ -84,7 +85,7 @@ object AsPropertyScannable {
   private def partialPropertyPredicate[P <: Expression](predicate: P, lhs: Expression) = lhs match {
     case property@Property(ident: Identifier, _) =>
       PartialPredicate.ifNotEqual(
-        FunctionInvocation(FunctionName(functions.Has.name)(predicate.position), property)(predicate.position),
+        FunctionInvocation(FunctionName(functions.Exists.name)(predicate.position), property)(predicate.position),
         predicate
       ).map(ImplicitlyPropertyScannable(_, ident, property))
 
@@ -95,26 +96,12 @@ object AsPropertyScannable {
 
 object AsStringRangeSeekable {
   def unapply(v: Any): Option[PrefixRangeSeekable] = v match {
-    case like@Like(Property(ident: Identifier, propertyKey), LikePattern(lit@StringLiteral(value)), _)
-      if !like.caseInsensitive =>
-        for ((range, prefix) <- getRange(value))
-          yield {
-            val prefixPattern = LikePattern(StringLiteral(prefix)(lit.position))
-            val predicate = like.copy(pattern = prefixPattern)(like.position)
-            PrefixRangeSeekable(range, predicate, ident, propertyKey)
-          }
+    case startsWith@StartsWith(Property(ident: Identifier, propertyKey), lit@StringLiteral(prefix)) if prefix.nonEmpty =>
+      Some(PrefixRangeSeekable(PrefixRange(lit), startsWith, ident, propertyKey))
+    case startsWith@StartsWith(Property(ident: Identifier, propertyKey), rhs) =>
+      Some(PrefixRangeSeekable(PrefixRange(rhs), startsWith, ident, propertyKey))
     case _ =>
       None
-  }
-
-  def getRange(literal: String): Option[(PrefixRange, String)] = {
-    val ops: List[LikePatternOp] = LikePatternParser(literal).compact.ops
-    ops match {
-      case MatchText(prefix) :: (_: WildcardLikePatternOp) :: tl =>
-        Some(PrefixRange(prefix) -> s"$prefix%")
-      case _ =>
-        None
-    }
   }
 }
 
@@ -159,8 +146,8 @@ sealed trait RangeSeekable[T <: Expression, V] extends Seekable[T] {
   def range: SeekRange[V]
 }
 
-case class PrefixRangeSeekable(override val range: PrefixRange, expr: Like, ident: Identifier, propertyKey: PropertyKeyName)
-  extends RangeSeekable[Like, String] {
+case class PrefixRangeSeekable(override val range: PrefixRange[Expression], expr: StartsWith, ident: Identifier, propertyKey: PropertyKeyName)
+  extends RangeSeekable[StartsWith, Expression] {
 
   def dependencies = Set.empty
 
@@ -216,7 +203,7 @@ case class SingleSeekableArg(expr: Expression) extends SeekableArgs {
   override def mapValues(f: Expression => Expression) = copy(f(expr))
 
   def asQueryExpression: SingleQueryExpression[Expression] = SingleQueryExpression(expr)
-  def asCommandSeekArgs: SeekArgs = SingleSeekArg(expr.asCommandExpression)
+  def asCommandSeekArgs: SeekArgs = SingleSeekArg(toCommandExpression(expr))
 }
 
 case class ManySeekableArgs(expr: Expression) extends SeekableArgs {
@@ -245,12 +232,12 @@ case class ManySeekableArgs(expr: Expression) extends SeekableArgs {
     case coll: Collection =>
       ZeroOneOrMany(coll.expressions) match {
         case Zero => SeekArgs.empty
-        case One(value) => SingleSeekArg(value.asCommandExpression)
-        case Many(values) => ManySeekArgs(coll.asCommandExpression)
+        case One(value) => SingleSeekArg(toCommandExpression(value))
+        case Many(values) => ManySeekArgs(toCommandExpression(coll))
       }
 
     case _ =>
-      ManySeekArgs(expr.asCommandExpression)
+      ManySeekArgs(toCommandExpression(expr))
   }
 }
 

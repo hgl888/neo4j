@@ -20,7 +20,7 @@ When used together with a Neo4j server, simply issue the following at the comman
 ./bin/neo4j-shell
 ----
 
-Under windows, the command is named `Neo4jShell.bat`.
+For help with running shell using Windows PowerShell, see <<powershell>>.
 
 For the full list of options, see the reference in the <<shell-manpage,Shell manual page>>.
 
@@ -43,7 +43,7 @@ There are two ways to start the shell, either by connecting to a remote shell se
 To start the shell and connect to a running server, run:
 [source,plain]
 ----
-neo4j-shell 
+neo4j-shell
 ----
 
 Alternatively supply +-port+ and +-name+ options depending on how the remote shell server was enabled.
@@ -380,13 +380,6 @@ include::shell/sample-session.asciidoc[]
 This example is creating a graph of the characters in the Matrix via the shell and then executing Cypher queries against it:
 
 include::shell/shell-matrix-example-graph.asciidoc[]
-
-Neo4j is configured for autoindexing, in this case with the following in the Neo4j configuration file:
-
-[source]
-----
-include::../autoindex.properties[]
-----
 
 The following is a sample shell session creating the Matrix graph and querying it.
 

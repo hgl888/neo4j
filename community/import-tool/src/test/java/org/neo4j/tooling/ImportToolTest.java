@@ -22,6 +22,7 @@ package org.neo4j.tooling;
 import org.junit.Rule;
 import org.junit.Test;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -81,6 +82,7 @@ import static org.neo4j.helpers.collection.Iterables.filter;
 import static org.neo4j.helpers.collection.IteratorUtil.count;
 import static org.neo4j.helpers.collection.IteratorUtil.single;
 import static org.neo4j.helpers.collection.IteratorUtil.singleOrNull;
+import static org.neo4j.tooling.GlobalGraphOperations.at;
 import static org.neo4j.tooling.ImportTool.MULTI_FILE_DELIMITER;
 
 public class ImportToolTest
@@ -95,6 +97,24 @@ public class ImportToolTest
     @Rule
     public final SuppressOutput suppressOutput = SuppressOutput.suppress( SuppressOutput.System.values() );
     private int dataIndex;
+
+    @Test
+    public void usageMessageIncludeExample() throws Exception
+    {
+        SuppressOutput.Voice outputVoice = suppressOutput.getOutputVoice();
+        importTool( "?" );
+        assertTrue( "Usage message should include example section, but was:" + outputVoice,
+                outputVoice.containsMessage( "Example:" ) );
+    }
+
+    @Test
+    public void usageMessagePrintedOnEmptyInputParameters() throws Exception
+    {
+        SuppressOutput.Voice outputVoice = suppressOutput.getOutputVoice();
+        importTool();
+        assertTrue( "Output should include usage section, but was:" + outputVoice,
+                outputVoice.containsMessage( "Example:" ) );
+    }
 
     @Test
     public void shouldImportWithAsManyDefaultsAsAvailable() throws Exception
@@ -134,6 +154,107 @@ public class ImportToolTest
 
         // THEN
         verifyData();
+    }
+
+    @Test
+    public void import4097Labels() throws Exception
+    {
+        // GIVEN
+        File header = file( fileName( "4097labels-header.csv" ) );
+        try ( PrintStream writer = new PrintStream( header )  )
+        {
+            writer.println( ":LABEL" );
+        }
+        File data = file( fileName( "4097labels.csv" ) );
+        try ( PrintStream writer = new PrintStream( data ) )
+        {
+            // Need to have unique names in order to get unique ids for labels. Want 4096 unique label ids present.
+            for ( int i = 0; i < 4096; i++ )
+            {
+                writer.println( "SIMPLE" + i );
+            }
+            // Then insert one with 3 array entries which will get ids greater than 4096. These cannot be inlined
+            // due 36 bits being divided into 3 parts of 12 bits each and 4097 > 2^12, thus these labels will be
+            // need to be dynamic records.
+            writer.println( "FIRST 4096|SECOND 4096|" );
+        }
+
+        // WHEN
+        importTool( "--into", dbRule.getStoreDirAbsolutePath(),
+                "--delimiter", "TAB",
+                "--array-delimiter", "|",
+                "--nodes", header.getAbsolutePath() + MULTI_FILE_DELIMITER + data.getAbsolutePath() );
+
+        // THEN
+        try ( Transaction tx = dbRule.beginTx() )
+        {
+            int nodeCount = count( at( dbRule ).getAllNodes() );
+            assertEquals( 4097, nodeCount );
+
+            tx.success();
+            ResourceIterator<Node> nodes = dbRule.findNodes( DynamicLabel.label( "FIRST 4096" ) );
+            assertEquals (1, IteratorUtil.asList(nodes).size() );
+            nodes = dbRule.findNodes( DynamicLabel.label( "SECOND 4096" ) );
+            assertEquals( 1, IteratorUtil.asList( nodes ).size() );
+        }
+    }
+
+    @Test
+    public void shouldFailIfHeaderHasLessColumnsThanData() throws Exception
+    {
+        // GIVEN
+        List<String> nodeIds = nodeIds();
+        Configuration config = Configuration.TABS;
+
+        // WHEN data file contains more columns than header file
+        int extraColumns = 3;
+        try
+        {
+            executeImportAndCatchOutput(
+                    "--into", dbRule.getStoreDirAbsolutePath(),
+                    "--delimiter", "TAB",
+                    "--array-delimiter", String.valueOf( config.arrayDelimiter() ),
+                    "--nodes", nodeHeader( config ).getAbsolutePath() + MULTI_FILE_DELIMITER +
+                            nodeData( false, config, nodeIds, alwaysTrue(), Charset.defaultCharset(), extraColumns )
+                                    .getAbsolutePath(),
+                    "--relationships", relationshipHeader( config ).getAbsolutePath() + MULTI_FILE_DELIMITER +
+                            relationshipData( false, config, nodeIds, alwaysTrue(), true ).getAbsolutePath() );
+
+            fail( "Should have thrown exception" );
+        }
+        catch ( InputException e )
+        {
+            // THEN
+            assertTrue( e.getMessage().contains( "Extra column not present in header on line" ) );
+        }
+    }
+
+    @Test
+    public void shouldWarnIfHeaderHasLessColumnsThanDataWhenToldTo() throws Exception
+    {
+        // GIVEN
+        List<String> nodeIds = nodeIds();
+        Configuration config = Configuration.TABS;
+        File bad = file( "bad.log" );
+
+        // WHEN data file contains more columns than header file
+        int extraColumns = 3;
+        executeImportAndCatchOutput(
+                "--into", dbRule.getStoreDirAbsolutePath(),
+                "--bad", bad.getAbsolutePath(),
+                "--bad-tolerance", Integer.toString( nodeIds.size() * extraColumns ),
+                "--ignore-extra-columns",
+                "--delimiter", "TAB",
+                "--array-delimiter", String.valueOf( config.arrayDelimiter() ),
+                "--nodes", nodeHeader( config ).getAbsolutePath() + MULTI_FILE_DELIMITER +
+                        nodeData( false, config, nodeIds, alwaysTrue(), Charset.defaultCharset(), extraColumns )
+                                .getAbsolutePath(),
+                "--relationships", relationshipHeader( config ).getAbsolutePath() + MULTI_FILE_DELIMITER +
+                        relationshipData( false, config, nodeIds, alwaysTrue(), true ).getAbsolutePath() );
+
+        // THEN
+        String badContents = FileUtils.readTextFile( bad, Charset.defaultCharset() );
+        assertTrue( badContents.contains( "Extra column not present in header on line" ) );
     }
 
     @Test
@@ -237,7 +358,7 @@ public class ImportToolTest
         try ( Transaction tx = db.beginTx() )
         {
             int nodeCount = 0;
-            for ( Node node : GlobalGraphOperations.at( db ).getAllNodes() )
+            for ( Node node : at( db ).getAllNodes() )
             {
                 assertTrue( node.hasProperty( "name" ) );
                 nodeCount++;
@@ -277,7 +398,7 @@ public class ImportToolTest
         try ( Transaction tx = db.beginTx() )
         {
             int nodeCount = 0;
-            for ( Node node : GlobalGraphOperations.at( db ).getAllNodes() )
+            for ( Node node : at( db ).getAllNodes() )
             {
                 assertTrue( node.hasProperty( "name" ) );
                 nodeCount++;
@@ -383,7 +504,7 @@ public class ImportToolTest
         GraphDatabaseService db = dbRule.getGraphDatabaseService();
         try ( Transaction tx = db.beginTx() )
         {
-            Iterator<Node> nodes = GlobalGraphOperations.at( db ).getAllNodes().iterator();
+            Iterator<Node> nodes = at( db ).getAllNodes().iterator();
             Iterator<String> expectedIds = FilteringIterator.noDuplicates( nodeIds.iterator() );
             while ( expectedIds.hasNext() )
             {
@@ -400,7 +521,7 @@ public class ImportToolTest
     }
 
     @Test
-    public void shouldLogRelationshipsReferingToMissingNode() throws Exception
+    public void shouldLogRelationshipsReferringToMissingNode() throws Exception
     {
         // GIVEN
         List<String> nodeIds = asList( "a", "b", "c" );
@@ -596,7 +717,7 @@ public class ImportToolTest
         GraphDatabaseService db = dbRule.getGraphDatabaseService();
         try ( Transaction tx = db.beginTx() )
         {
-            Iterable<Node> allNodes = GlobalGraphOperations.at( db ).getAllNodes();
+            Iterable<Node> allNodes = at( db ).getAllNodes();
             int anonymousCount = 0;
             for ( final String id : nodeIds )
             {
@@ -637,25 +758,27 @@ public class ImportToolTest
     @Test
     public void shouldPrintReferenceLinkOnDataImportErrors() throws Exception
     {
-        shouldPrintReferenceLinkAsPartOfErrorMessage(nodeIds(),
+        shouldPrintReferenceLinkAsPartOfErrorMessage( nodeIds(),
                 IteratorUtil.iterator( new RelationshipDataLine( "1", "", "type", "name" ) ),
                 "Relationship missing mandatory field 'END_ID', read more about relationship " +
-                "format in the manual:  http://neo4j.com/docs/" + Version.getKernelVersion() +
+                "format in the manual:  http://neo4j.com/docs/" + Version.getKernel().getReleaseVersion() +
                 "/import-tool-header-format.html#import-tool-header-format-rels" );
         shouldPrintReferenceLinkAsPartOfErrorMessage( nodeIds(),
                 IteratorUtil.iterator( new RelationshipDataLine( "", "1", "type", "name" ) ),
                 "Relationship missing mandatory field 'START_ID', read more" +
-                " about relationship format in the manual:  http://neo4j.com/docs/" + Version.getKernelVersion() +
+                " about relationship format in the manual:  http://neo4j.com/docs/" +
+                Version.getKernel().getReleaseVersion() +
                 "/import-tool-header-format.html#import-tool-header-format-rels" );
         shouldPrintReferenceLinkAsPartOfErrorMessage( nodeIds(),
                 IteratorUtil.iterator( new RelationshipDataLine( "1", "2", "", "name" ) ),
                 "Relationship missing mandatory field 'TYPE', read more about relationship " +
-                "format in the manual:  http://neo4j.com/docs/" + Version.getKernelVersion() +
+                "format in the manual:  http://neo4j.com/docs/" + Version.getKernel().getReleaseVersion() +
                 "/import-tool-header-format.html#import-tool-header-format-rels" );
         shouldPrintReferenceLinkAsPartOfErrorMessage( Arrays.asList( "1", "1" ),
                 IteratorUtil.iterator( new RelationshipDataLine( "1", "2", "type", "name" ) ),
                 "Duplicate input ids that would otherwise clash can be put into separate id space, read more " +
-                "about how to use id spaces in the manual: http://neo4j.com/docs/" + Version.getKernelVersion() +
+                "about how to use id spaces in the manual: http://neo4j.com/docs/" +
+                Version.getKernel().getReleaseVersion() +
                 "/import-tool-header-format.html#import-tool-id-spaces" );
     }
 
@@ -696,7 +819,7 @@ public class ImportToolTest
         GraphDatabaseService db = dbRule.getGraphDatabaseAPI();
         try ( Transaction tx = db.beginTx() )
         {
-            ResourceIterator<Node> allNodes = GlobalGraphOperations.at( db ).getAllNodes().iterator();
+            ResourceIterator<Node> allNodes = at( db ).getAllNodes().iterator();
             Node node = IteratorUtil.single( allNodes );
             allNodes.close();
 
@@ -720,9 +843,58 @@ public class ImportToolTest
         GraphDatabaseService graphDatabaseService = dbRule.getGraphDatabaseService();
         try ( Transaction tx = graphDatabaseService.beginTx() )
         {
-            ResourceIterator<Node> allNodes = GlobalGraphOperations.at( graphDatabaseService ).getAllNodes().iterator();
+            ResourceIterator<Node> allNodes = at( graphDatabaseService ).getAllNodes().iterator();
             assertFalse( "Expected database to be empty", allNodes.hasNext() );
             tx.success();
+        }
+    }
+
+    @Test
+    public void shouldIgnoreEmptyQuotedStringsIfConfiguredTo() throws Exception
+    {
+        // GIVEN
+        File data = data(
+                ":ID,one,two,three",
+                "1,\"\",,value" );
+
+        // WHEN
+        importTool(
+                "--into", dbRule.getStoreDirAbsolutePath(),
+                "--nodes", data.getAbsolutePath(),
+                "--ignore-empty-strings", "true" );
+
+        // THEN
+        GraphDatabaseService db = dbRule.getGraphDatabaseAPI();
+        try ( Transaction tx = db.beginTx() )
+        {
+            Node node = single( at( db ).getAllNodes() );
+            assertEquals( "three", single( node.getPropertyKeys() ) );
+            tx.success();
+        }
+    }
+
+    @Test
+    public void shouldPrintUserFriendlyMessageAboutUnsupportedMultilineFields() throws Exception
+    {
+        // GIVEN
+        File data = data(
+                ":ID,name",
+                "1,\"one\ntwo\nthree\"",
+                "2,four" );
+
+        try
+        {
+            importTool(
+                    "--into", dbRule.getStoreDirAbsolutePath(),
+                    "--nodes", data.getAbsolutePath(),
+                    "--multiline-fields", "false" );
+            fail( "Should have failed" );
+        }
+        catch ( InputException e )
+        {
+            // THEN
+            assertTrue( suppressOutput.getErrorVoice().containsMessage( "Detected field which spanned multiple lines" ) );
+            assertTrue( suppressOutput.getErrorVoice().containsMessage( "multiline-fields" ) );
         }
     }
 
@@ -773,14 +945,14 @@ public class ImportToolTest
         try ( Transaction tx = db.beginTx() )
         {
             int nodeCount = 0, relationshipCount = 0;
-            for ( Node node : GlobalGraphOperations.at( db ).getAllNodes() )
+            for ( Node node : at( db ).getAllNodes() )
             {
                 assertTrue( node.hasProperty( "name" ) );
                 nodeAdditionalValidation.validate( node );
                 nodeCount++;
             }
             assertEquals( NODE_COUNT, nodeCount );
-            for ( Relationship relationship : GlobalGraphOperations.at( db ).getAllRelationships() )
+            for ( Relationship relationship : at( db ).getAllRelationships() )
             {
                 assertTrue( relationship.hasProperty( "created" ) );
                 relationshipAdditionalValidation.validate( relationship );
@@ -829,7 +1001,7 @@ public class ImportToolTest
         try ( Transaction tx = db.beginTx() )
         {
             Map<String,Node> nodes = new HashMap<>();
-            for ( Node node : GlobalGraphOperations.at( db ).getAllNodes() )
+            for ( Node node : at( db ).getAllNodes() )
             {
                 nodes.put( idOf( node ), node );
             }
@@ -872,6 +1044,12 @@ public class ImportToolTest
     private File nodeData( boolean includeHeader, Configuration config, List<String> nodeIds,
             IntPredicate linePredicate, Charset encoding ) throws Exception
     {
+        return nodeData( includeHeader, config, nodeIds, linePredicate, encoding, 0 );
+    }
+
+    private File nodeData( boolean includeHeader, Configuration config, List<String> nodeIds,
+            IntPredicate linePredicate, Charset encoding, int extraColumns ) throws Exception
+    {
         File file = file( fileName( "nodes.csv" ) );
         try ( PrintStream writer = writer( file, encoding ) )
         {
@@ -879,7 +1057,7 @@ public class ImportToolTest
             {
                 writeNodeHeader( writer, config, null );
             }
-            writeNodeData( writer, config, nodeIds, linePredicate );
+            writeNodeData( writer, config, nodeIds, linePredicate, extraColumns );
         }
         return file;
     }
@@ -921,7 +1099,7 @@ public class ImportToolTest
     }
 
     private void writeNodeData( PrintStream writer, Configuration config, List<String> nodeIds,
-            IntPredicate linePredicate )
+            IntPredicate linePredicate, int extraColumns )
     {
         char delimiter = config.delimiter();
         char arrayDelimiter = config.arrayDelimiter();
@@ -929,10 +1107,22 @@ public class ImportToolTest
         {
             if ( linePredicate.test( i ) )
             {
-                writer.println( nodeIds.get( i ) + delimiter + randomName() +
-                                delimiter + randomLabels( arrayDelimiter ) );
+                writer.println( getLine( nodeIds.get( i ), delimiter, arrayDelimiter, extraColumns ) );
             }
         }
+    }
+
+    private String getLine( String nodeId, char delimiter, char arrayDelimiter, int extraColumns )
+    {
+        StringBuilder stringBuilder = new StringBuilder().append( nodeId ).append( delimiter ).append( randomName() )
+                .append( delimiter ).append( randomLabels( arrayDelimiter ) );
+
+        for ( int i = 0; i < extraColumns; i++ )
+        {
+            stringBuilder.append( delimiter ).append( "ExtraColumn" ).append( i );
+        }
+
+        return stringBuilder.toString();
     }
 
     private String randomLabels( char arrayDelimiter )
@@ -952,7 +1142,7 @@ public class ImportToolTest
 
     private String randomName()
     {
-        int length = random.nextInt( 10 )+5;
+        int length = random.nextInt( 10 ) + 5;
         StringBuilder builder = new StringBuilder();
         for ( int i = 0; i < length; i++ )
         {
@@ -962,13 +1152,13 @@ public class ImportToolTest
     }
 
     private File relationshipData( boolean includeHeader, Configuration config, List<String> nodeIds,
-                                   IntPredicate linePredicate, boolean specifyType ) throws Exception
+            IntPredicate linePredicate, boolean specifyType ) throws Exception
     {
         return relationshipData( includeHeader, config, nodeIds, linePredicate, specifyType, Charset.defaultCharset() );
     }
 
     private File relationshipData( boolean includeHeader, Configuration config, List<String> nodeIds,
-                                   IntPredicate linePredicate, boolean specifyType, Charset encoding ) throws Exception
+            IntPredicate linePredicate, boolean specifyType, Charset encoding ) throws Exception
     {
         return relationshipData( includeHeader, config, randomRelationships( nodeIds ), linePredicate,
                 specifyType, encoding );
@@ -1065,7 +1255,7 @@ public class ImportToolTest
         public String toString()
         {
             return "RelationshipDataLine [startNodeId=" + startNodeId + ", endNodeId=" + endNodeId + ", type=" + type
-                    + ", name=" + name + "]";
+                   + ", name=" + name + "]";
         }
     }
 
@@ -1093,11 +1283,11 @@ public class ImportToolTest
             if ( linePredicate.test( i ) )
             {
                 writer.println( entry.startNodeId +
-                        delimiter + entry.endNodeId +
-                        (specifyType ? (delimiter + entry.type) : "") +
-                        delimiter + currentTimeMillis() +
-                        delimiter + (entry.name != null ? entry.name : "")
-                        );
+                                delimiter + entry.endNodeId +
+                                (specifyType ? (delimiter + entry.type) : "") +
+                                delimiter + currentTimeMillis() +
+                                delimiter + (entry.name != null ? entry.name : "")
+                );
             }
         }
     }
@@ -1148,5 +1338,22 @@ public class ImportToolTest
     private void importTool( String... arguments ) throws IOException
     {
         ImportTool.main( arguments, true );
+    }
+
+    private String executeImportAndCatchOutput(String... arguments) throws IOException
+    {
+        PrintStream originalStream = System.out;
+        ByteArrayOutputStream outputStreamBuffer = new ByteArrayOutputStream();
+        PrintStream replacement = new PrintStream( outputStreamBuffer );
+        System.setOut( replacement );
+        try
+        {
+            importTool( arguments );
+            return new String( outputStreamBuffer.toByteArray() );
+        }
+        finally
+        {
+            System.setOut( originalStream );
+        }
     }
 }

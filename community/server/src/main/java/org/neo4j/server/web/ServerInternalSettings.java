@@ -78,10 +78,14 @@ public class ServerInternalSettings
 
     public static final Setting<File> auth_store = setting("dbms.security.auth_store.location", PATH, "data/dbms/auth");
 
+    public static final Setting<File> rrd_store = setting("org.neo4j.server.webadmin.rrdb.location", PATH, "data/rrd");
+
     public static final Setting<File> legacy_db_location = setting( "org.neo4j.server.database.location", PATH, "data/graph.db" );
 
     public static final Setting<File> legacy_db_config = setting( "org.neo4j.server.db.tuning.properties", PATH,
             separator + "etc" + separator + "neo" + separator + ServerInternalSettings.DB_TUNING_CONFIG_FILE_NAME);
 
     public static final Setting<Boolean> webadmin_enabled = setting( "dbms.webadmin.enabled", BOOLEAN, TRUE );
+
+    public static final Setting<Boolean> rrdb_enabled = setting( "dbms.rrdb.enabled", BOOLEAN, FALSE );
 }

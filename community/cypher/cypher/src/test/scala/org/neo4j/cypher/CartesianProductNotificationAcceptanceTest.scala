@@ -23,9 +23,10 @@ import org.mockito.Matchers._
 import org.mockito.Mockito.{verify, _}
 import org.neo4j.cypher.internal.compatibility.{StringInfoLogger2_3, WrappedMonitors2_3}
 import org.neo4j.cypher.internal.compiler.v2_3._
-import org.neo4j.cypher.internal.compiler.v2_3.notification.CartesianProductNotification
-import org.neo4j.cypher.internal.compiler.v2_3.test_helpers.CypherFunSuite
+import org.neo4j.cypher.internal.frontend.v2_3.notification.CartesianProductNotification
+import org.neo4j.cypher.internal.frontend.v2_3.test_helpers.CypherFunSuite
 import org.neo4j.cypher.internal.compiler.v2_3.tracing.rewriters.RewriterStepSequencer
+import org.neo4j.cypher.internal.frontend.v2_3.InputPosition
 import org.neo4j.cypher.internal.spi.v2_3.GeneratedQueryStructure
 import org.neo4j.helpers.Clock
 import org.neo4j.logging.NullLog
@@ -76,7 +77,6 @@ class CartesianProductNotificationAcceptanceTest extends CypherFunSuite with Gra
     //given
     val logger = mock[InternalNotificationLogger]
     val compiler = createCompiler()
-    val executionMode = NormalMode
 
     //when
     graph.inTx(compiler.planQuery("MATCH (a)-->(b) MATCH (c)-->(d) RETURN *", planContext, logger))
@@ -85,15 +85,36 @@ class CartesianProductNotificationAcceptanceTest extends CypherFunSuite with Gra
     verify(logger, never) += any()
   }
 
+  test("this query does not contain a cartesian product") {
+    //given
+    val logger = mock[InternalNotificationLogger]
+    val compiler = createCompiler()
+
+    //when
+    graph.inTx(compiler.planQuery("""MATCH (p)-[r1]-(m),
+                                    |(m)-[r2]-(d), (d)-[r3]-(m2)
+                                    |RETURN DISTINCT d""".stripMargin, planContext, logger))
+
+    //then
+    verify(logger, never) += any()
+  }
+
   private def createCompiler() =
     CypherCompilerFactory.costBasedCompiler(
-      graph, 128, 0.5, 1000L, Clock.SYSTEM_CLOCK,
+      graph,
+      CypherCompilerConfiguration(
+        queryCacheSize = 128,
+        statsDivergenceThreshold = 0.5,
+        queryPlanTTL = 1000L,
+        useErrorsOverWarnings = false,
+        nonIndexedLabelWarningThreshold = 10000L
+      ),
+      Clock.SYSTEM_CLOCK,
       GeneratedQueryStructure,
       new WrappedMonitors2_3(kernelMonitors),
       new StringInfoLogger2_3(NullLog.getInstance),
       plannerName = Some(GreedyPlannerName),
       runtimeName = Some(CompiledRuntimeName),
-      rewriterSequencer = RewriterStepSequencer.newValidating,
-      useErrorsOverWarnings = false
+      rewriterSequencer = RewriterStepSequencer.newValidating
     )
 }

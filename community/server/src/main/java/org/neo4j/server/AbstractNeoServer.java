@@ -28,6 +28,7 @@ import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.regex.Pattern;
 import javax.servlet.Filter;
 
 import org.neo4j.function.Function;
@@ -111,6 +112,14 @@ public abstract class AbstractNeoServer implements NeoServer
      */
     private static final long ROUNDING_SECOND = 1000L;
 
+    private static final Pattern[] DEFAULT_URI_WHITELIST = new Pattern[]{
+            Pattern.compile( "/browser.*" ),
+            Pattern.compile( "/webadmin.*" ),
+            Pattern.compile( "/" )
+    };
+
+    private final Database.Factory dbFactory;
+    private final GraphDatabaseFacadeFactory.Dependencies dependencies;
     protected final LogProvider logProvider;
     protected final Log log;
 
@@ -134,6 +143,8 @@ public abstract class AbstractNeoServer implements NeoServer
     private TransactionFacade transactionFacade;
     private TransactionHandleRegistry transactionRegistry;
 
+    private boolean initialized = false;
+
     protected abstract Iterable<ServerModule> createServerModules();
 
     protected abstract WebServer createWebServer();
@@ -142,8 +153,19 @@ public abstract class AbstractNeoServer implements NeoServer
             GraphDatabaseFacadeFactory.Dependencies dependencies, LogProvider logProvider )
     {
         this.config = config;
+        this.dbFactory = dbFactory;
+        this.dependencies = dependencies;
         this.logProvider = logProvider;
         this.log = logProvider.getLog( getClass() );
+    }
+
+    @Override
+    public void init()
+    {
+        if ( initialized )
+        {
+            return;
+        }
 
         this.database = life.add( dependencyResolver.satisfyDependency(dbFactory.newDatabase( config, dependencies)) );
 
@@ -152,27 +174,25 @@ public abstract class AbstractNeoServer implements NeoServer
         this.authManager = life.add(new AuthManager( users, Clock.SYSTEM_CLOCK, config.get( ServerSettings.auth_enabled ) ));
         this.webServer = createWebServer();
 
+
         this.keyStoreInfo = createKeyStore();
 
         for ( ServerModule moduleClass : createServerModules() )
         {
             registerModule( moduleClass );
         }
-    }
 
-    @Override
-    public void init()
-    {
-
+        this.initialized = true;
     }
 
     @Override
     public void start() throws ServerStartupException
     {
+        init();
         try
         {
             life.start();
-            
+
             DiagnosticsManager diagnosticsManager = resolveDependency(DiagnosticsManager.class);
 
             Log diagnosticsLog = diagnosticsManager.getTargetLog();
@@ -180,7 +200,8 @@ public abstract class AbstractNeoServer implements NeoServer
 
             databaseActions = createDatabaseActions();
 
-            if(getConfig().get( ServerInternalSettings.webadmin_enabled ))
+            if( getConfig().get( ServerInternalSettings.webadmin_enabled ) &&
+                getConfig().get( ServerInternalSettings.rrdb_enabled ) )
             {
                 // TODO: RrdDb is not needed once we remove the old webadmin
                 rrdDbScheduler = new RoundRobinJobScheduler( logProvider );
@@ -431,6 +452,11 @@ public abstract class AbstractNeoServer implements NeoServer
         return config.get( ServerSettings.webserver_address );
     }
 
+    protected Pattern[] getUriWhitelist()
+    {
+        return DEFAULT_URI_WHITELIST;
+    }
+
     protected KeyStoreInformation createKeyStore()
     {
         File privateKeyPath = config.get( ServerSettings.tls_key_file ).getAbsoluteFile();
@@ -598,7 +624,8 @@ public abstract class AbstractNeoServer implements NeoServer
         singletons.add( providerForSingleton( new ConfigWrappingConfiguration( getConfig() ), Configuration.class ) );
         singletons.add( providerForSingleton( getConfig(), Config.class ) );
 
-        if(getConfig().get( ServerInternalSettings.webadmin_enabled ))
+        if (  getConfig().get( ServerInternalSettings.webadmin_enabled ) &&
+              getConfig().get( ServerInternalSettings.rrdb_enabled ) )
         {
             singletons.add( new RrdDbProvider( rrdDbWrapper ) );
         }

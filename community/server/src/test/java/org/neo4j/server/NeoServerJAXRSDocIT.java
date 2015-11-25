@@ -64,7 +64,8 @@ public class NeoServerJAXRSDocIT extends ExclusiveServerTestBase
     @Test
     public void shouldMakeJAXRSClassesAvailableViaHTTP() throws Exception
     {
-        server = ServerHelper.createNonPersistentServer();
+        CommunityServerBuilder builder = CommunityServerBuilder.server();
+        server = ServerHelper.createNonPersistentServer( builder );
         FunctionalTestHelper functionalTestHelper = new FunctionalTestHelper( server );
 
         JaxRsResponse response = new RestRequest().get( functionalTestHelper.webAdminUri() );

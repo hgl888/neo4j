@@ -28,16 +28,17 @@ import org.neo4j.function.Predicate;
 import org.neo4j.function.Predicates;
 import org.neo4j.helpers.ObjectUtil;
 import org.neo4j.helpers.collection.FilteringIterator;
-import org.neo4j.kernel.api.constraints.NodePropertyExistenceConstraint;
-import org.neo4j.kernel.api.constraints.RelationshipPropertyExistenceConstraint;
 import org.neo4j.kernel.api.constraints.NodePropertyConstraint;
+import org.neo4j.kernel.api.constraints.NodePropertyExistenceConstraint;
 import org.neo4j.kernel.api.constraints.PropertyConstraint;
 import org.neo4j.kernel.api.constraints.RelationshipPropertyConstraint;
+import org.neo4j.kernel.api.constraints.RelationshipPropertyExistenceConstraint;
 import org.neo4j.kernel.api.constraints.UniquenessConstraint;
 import org.neo4j.kernel.api.cursor.LabelItem;
 import org.neo4j.kernel.api.cursor.NodeItem;
 import org.neo4j.kernel.api.cursor.RelationshipItem;
 import org.neo4j.kernel.api.exceptions.EntityNotFoundException;
+import org.neo4j.kernel.api.exceptions.ProcedureException;
 import org.neo4j.kernel.api.exceptions.index.IndexNotFoundKernelException;
 import org.neo4j.kernel.api.exceptions.schema.AlreadyConstrainedException;
 import org.neo4j.kernel.api.exceptions.schema.AlreadyIndexedException;
@@ -46,11 +47,11 @@ import org.neo4j.kernel.api.exceptions.schema.CreateConstraintFailureException;
 import org.neo4j.kernel.api.exceptions.schema.DropConstraintFailureException;
 import org.neo4j.kernel.api.exceptions.schema.DropIndexFailureException;
 import org.neo4j.kernel.api.exceptions.schema.IndexBrokenKernelException;
-import org.neo4j.kernel.api.exceptions.schema.NodePropertyExistenceConstraintVerificationFailedKernelException;
-import org.neo4j.kernel.api.exceptions.schema.RelationshipPropertyExistenceConstraintVerificationFailedKernelException;
 import org.neo4j.kernel.api.exceptions.schema.UnableToValidateConstraintKernelException;
+import org.neo4j.kernel.api.exceptions.schema.ProcedureConstraintViolation;
 import org.neo4j.kernel.api.exceptions.schema.UniquePropertyConstraintViolationKernelException;
 import org.neo4j.kernel.api.index.IndexDescriptor;
+import org.neo4j.kernel.api.procedures.ProcedureSignature;
 import org.neo4j.kernel.api.properties.DefinedProperty;
 import org.neo4j.kernel.api.properties.Property;
 import org.neo4j.kernel.api.txstate.TxStateHolder;
@@ -60,6 +61,7 @@ import org.neo4j.kernel.impl.api.operations.EntityWriteOperations;
 import org.neo4j.kernel.impl.api.operations.SchemaReadOperations;
 import org.neo4j.kernel.impl.api.operations.SchemaWriteOperations;
 import org.neo4j.kernel.impl.api.store.StoreStatement;
+import org.neo4j.kernel.impl.constraints.ConstraintSemantics;
 import org.neo4j.kernel.impl.locking.Locks;
 
 import static org.neo4j.kernel.api.StatementConstants.NO_SUCH_NODE;
@@ -75,13 +77,15 @@ public class ConstraintEnforcingEntityOperations implements EntityOperations, Sc
     private final EntityReadOperations entityReadOperations;
     private final SchemaWriteOperations schemaWriteOperations;
     private final SchemaReadOperations schemaReadOperations;
+    private final ConstraintSemantics constraintSemantics;
 
     public ConstraintEnforcingEntityOperations(
-            EntityWriteOperations entityWriteOperations,
+            ConstraintSemantics constraintSemantics, EntityWriteOperations entityWriteOperations,
             EntityReadOperations entityReadOperations,
             SchemaWriteOperations schemaWriteOperations,
             SchemaReadOperations schemaReadOperations )
     {
+        this.constraintSemantics = constraintSemantics;
         this.entityWriteOperations = entityWriteOperations;
         this.entityReadOperations = entityReadOperations;
         this.schemaWriteOperations = schemaWriteOperations;
@@ -532,26 +536,10 @@ public class ConstraintEnforcingEntityOperations implements EntityOperations, Sc
     public NodePropertyExistenceConstraint nodePropertyExistenceConstraintCreate( KernelStatement state, int labelId,
             int propertyKeyId ) throws AlreadyConstrainedException, CreateConstraintFailureException
     {
-        PrimitiveLongIterator nodes = nodesGetForLabel( state, labelId );
-        while ( nodes.hasNext() )
+        try ( Cursor<NodeItem> cursor = nodeCursorGetForLabel( state, labelId ) )
         {
-            long nodeId = nodes.next();
-            try ( Cursor<NodeItem> node = nodeCursor( state, nodeId ) )
-            {
-                if ( node.next() )
-                {
-                    if ( !node.get().hasProperty( propertyKeyId ) )
-                    {
-                        NodePropertyExistenceConstraint constraint = new NodePropertyExistenceConstraint( labelId,
-                                propertyKeyId );
-                        throw new CreateConstraintFailureException( constraint,
-                                new NodePropertyExistenceConstraintVerificationFailedKernelException( constraint,
-                                        nodeId ) );
-                    }
-                }
-            }
+            constraintSemantics.validateNodePropertyExistenceConstraint( cursor, labelId, propertyKeyId );
         }
-
         return schemaWriteOperations.nodePropertyExistenceConstraintCreate( state, labelId, propertyKeyId );
     }
 
@@ -559,30 +547,10 @@ public class ConstraintEnforcingEntityOperations implements EntityOperations, Sc
     public RelationshipPropertyExistenceConstraint relationshipPropertyExistenceConstraintCreate( KernelStatement state,
             int relTypeId, int propertyKeyId ) throws AlreadyConstrainedException, CreateConstraintFailureException
     {
-        PrimitiveLongIterator relationships = relationshipsGetAll( state );
-        while ( relationships.hasNext() )
+        try ( Cursor<RelationshipItem> cursor = relationshipCursorGetAll( state ) )
         {
-            long relationshipId = relationships.next();
-            try ( Cursor<RelationshipItem> relationship = relationshipCursor( state, relationshipId ) )
-            {
-                if ( relationship.next() )
-                {
-                    if ( relationship.get().type() == relTypeId && !relationship.get().hasProperty( propertyKeyId ) )
-                    {
-                        RelationshipPropertyExistenceConstraint constraint = new
-                                RelationshipPropertyExistenceConstraint(
-
-                                relTypeId,
-                                propertyKeyId );
-                        throw new CreateConstraintFailureException( constraint,
-                                new RelationshipPropertyExistenceConstraintVerificationFailedKernelException(
-                                        constraint,
-                                        relationshipId ) );
-                    }
-                }
-            }
+            constraintSemantics.validateRelationshipPropertyExistenceConstraint( cursor, relTypeId, propertyKeyId );
         }
-
         return schemaWriteOperations.relationshipPropertyExistenceConstraintCreate( state, relTypeId, propertyKeyId );
     }
 
@@ -598,5 +566,18 @@ public class ConstraintEnforcingEntityOperations implements EntityOperations, Sc
             throws DropConstraintFailureException
     {
         schemaWriteOperations.constraintDrop( state, constraint );
+    }
+
+    @Override
+    public void procedureCreate( KernelStatement state, ProcedureSignature signature, String language, String code )
+            throws ProcedureException, ProcedureConstraintViolation
+    {
+        schemaWriteOperations.procedureCreate( state, signature, language, code );
+    }
+
+    @Override
+    public void procedureDrop( KernelStatement statement, ProcedureSignature.ProcedureName name ) throws ProcedureConstraintViolation, ProcedureException
+    {
+        schemaWriteOperations.procedureDrop( statement, name );
     }
 }

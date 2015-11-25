@@ -25,8 +25,8 @@ import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{ExecutionPlanInPro
 import org.neo4j.cypher.internal.compiler.v2_3.mutation.UpdateAction
 import org.neo4j.cypher.internal.compiler.v2_3.pipes._
 import org.neo4j.cypher.internal.compiler.v2_3.spi.PlanContext
-import org.neo4j.cypher.internal.compiler.v2_3.symbols._
-import org.neo4j.cypher.internal.compiler.v2_3.test_helpers.CypherFunSuite
+import org.neo4j.cypher.internal.frontend.v2_3.symbols._
+import org.neo4j.cypher.internal.frontend.v2_3.test_helpers.CypherFunSuite
 
 trait BuilderTest extends CypherFunSuite {
 
@@ -53,7 +53,9 @@ trait BuilderTest extends CypherFunSuite {
   def assertAccepts(p: Pipe, q: PartiallySolvedQuery): ExecutionPlanInProgress = assertAccepts(plan(p, q))
 
   def assertAccepts(planInProgress: ExecutionPlanInProgress): ExecutionPlanInProgress = {
-    withClue("Should be able to build on this")(builder.canWorkWith(planInProgress, context)) should equal(true)
+    withClue("Should be able to build on this."){
+      builder.canWorkWith(planInProgress, context) should equal(true)
+    }
     builder.apply(planInProgress, context)
   }
 

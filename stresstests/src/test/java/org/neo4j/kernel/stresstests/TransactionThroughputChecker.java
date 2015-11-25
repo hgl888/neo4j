@@ -5,17 +5,17 @@
  * This file is part of Neo4j.
  *
  * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 package org.neo4j.kernel.stresstests;
 
@@ -39,9 +39,6 @@ public class TransactionThroughputChecker implements Workload.TransactionThrough
 
     public void assertThroughput( PrintStream out )
     {
-        // dropping the first report which is
-
-
         if ( reports.isEmpty() )
         {
             out.println( "no reports" );
@@ -59,28 +56,49 @@ public class TransactionThroughputChecker implements Workload.TransactionThrough
 
         double average = sum / (double) reports.size();
         out.println( "Average throughput (tx/ms): " + average );
-        double tolerance = average * 0.20d;
-        out.println( "Start check throughput with tolerance: " + tolerance );
 
-        int nonMatchingCounter = 0;
+        double powerSum = 0.0;
         for ( double report : reports )
         {
-            if ( doubleIsDifferent( average, report, tolerance ) )
+            powerSum += Math.pow(report - average, 2);
+        }
+
+        double stdDeviation = Math.sqrt( powerSum / (double) reports.size() );
+        out.println( "Standard deviation (tx/ms): " + stdDeviation );
+        double twoStdDeviations = stdDeviation * 2.0;
+        out.println( "Two standard deviations (tx/ms): " + twoStdDeviations );
+
+        int inOneStdDeviationRange = 0;
+        int inTwoStdDeviationRange = 0;
+        for ( double report : reports )
+        {
+            if ( Math.abs( average - report ) <= stdDeviation )
             {
-                System.err.println( "Found a time slot when throughput differs too much wrt the average:" );
-                System.err.println( "\tAverage=" + average + ", current=" + report + ", tolerance=" + tolerance );
-                nonMatchingCounter++;
+                inOneStdDeviationRange++;
+                inTwoStdDeviationRange++;
+            }
+            else if ( Math.abs( average - report ) <= twoStdDeviations )
+            {
+                System.err.println( "Outside _one_ std deviation range: " + report );
+                inTwoStdDeviationRange++;
+            }
+            else
+            {
+                System.err.println( "Outside _two_ std deviation range: " + report );
             }
         }
-        int nonSuccessPercentage = (int) ((nonMatchingCounter / (double) reports.size()) * 100);
-        System.out.println( "Non successful percentage is: " + nonSuccessPercentage );
-        assertTrue( "Assumption is that more then 80 percent should be in " +
-                    "range [average - (average * 0.2 ); average  + (average * 0.2)] ",
-                nonSuccessPercentage < 20 );
+
+        int inOneStdDeviationRangePercentage =
+                (int) ( (inOneStdDeviationRange  * 100.0) / (double) reports.size() );
+        System.out.println( "Percentage inside one std deviation is: " + inOneStdDeviationRangePercentage );
+        assertTrue( "Assumption is that at least 65 percent should be in one std deviation (" + stdDeviation  + ")" +
+                    " range from the average (" + average + ") ", inOneStdDeviationRangePercentage >= 65 );
+
+        int inTwoStdDeviationRangePercentage =
+                (int) ( (inTwoStdDeviationRange  * 100.0) / (double) reports.size() );
+        System.out.println( "Percentage inside two std deviations is: " + inTwoStdDeviationRangePercentage );
+        assertTrue( "Assumption is that at least 90 percent should be in two std deviations (" + twoStdDeviations + ")" +
+                    " range from the average (" + average + ") ", inTwoStdDeviationRangePercentage >= 90 );
     }
 
-    private boolean doubleIsDifferent( double expected, double actual, double tolerance )
-    {
-        return Double.compare( expected, actual ) != 0 && Math.abs( expected - actual ) > tolerance;
-    }
 }

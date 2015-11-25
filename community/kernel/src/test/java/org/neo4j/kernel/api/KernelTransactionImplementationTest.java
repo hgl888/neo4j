@@ -19,12 +19,12 @@
  */
 package org.neo4j.kernel.api;
 
-import java.util.Collection;
-
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
+
+import java.util.Collection;
 
 import org.neo4j.collection.pool.Pool;
 import org.neo4j.helpers.FakeClock;
@@ -35,11 +35,14 @@ import org.neo4j.kernel.impl.api.TransactionApplicationMode;
 import org.neo4j.kernel.impl.api.TransactionCommitProcess;
 import org.neo4j.kernel.impl.api.TransactionHeaderInformation;
 import org.neo4j.kernel.impl.api.TransactionHooks;
+import org.neo4j.kernel.impl.api.store.ProcedureCache;
 import org.neo4j.kernel.impl.api.store.StoreReadLayer;
 import org.neo4j.kernel.impl.api.store.StoreStatement;
+import org.neo4j.kernel.impl.constraints.ConstraintSemantics;
 import org.neo4j.kernel.impl.locking.LockGroup;
 import org.neo4j.kernel.impl.locking.NoOpClient;
-import org.neo4j.kernel.impl.store.NeoStore;
+import org.neo4j.kernel.impl.store.MetaDataStore;
+import org.neo4j.kernel.impl.store.NeoStores;
 import org.neo4j.kernel.impl.transaction.TransactionHeaderInformationFactory;
 import org.neo4j.kernel.impl.transaction.TransactionMonitor;
 import org.neo4j.kernel.impl.transaction.TransactionRepresentation;
@@ -50,7 +53,6 @@ import org.neo4j.kernel.impl.transaction.tracing.TransactionTracer;
 import org.neo4j.test.DoubleLatch;
 
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
-
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Matchers.anyListOf;
@@ -59,6 +61,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 
 public class KernelTransactionImplementationTest
@@ -345,7 +348,7 @@ public class KernelTransactionImplementationTest
             // WHEN committing it at a later point
             clock.forward( 5, MILLISECONDS );
             // ...and simulating some other transaction being committed
-            when( neoStore.getLastCommittedTransactionId() ).thenReturn( 7L );
+            when( metaDataStore.getLastCommittedTransactionId() ).thenReturn( 7L );
             transaction.success();
         }
 
@@ -355,7 +358,22 @@ public class KernelTransactionImplementationTest
         assertEquals( startingTime+5, commitProcess.transaction.getTimeCommitted() );
     }
 
-    private final NeoStore neoStore = mock( NeoStore.class );
+    @Test
+    public void shouldNotReturnTransactionInstanceWithTerminationMarkToPool() throws Exception
+    {
+        // GIVEN
+        KernelTransactionImplementation transaction = newTransaction();
+
+        // WHEN
+        transaction.markForTermination();
+        transaction.close();
+
+        // THEN
+        verifyZeroInteractions( pool );
+    }
+
+    private final NeoStores neoStores = mock( NeoStores.class );
+    private final MetaDataStore metaDataStore = mock( MetaDataStore.class );
     private final TransactionHooks hooks = new TransactionHooks();
     private final TransactionRecordState recordState = mock( TransactionRecordState.class );
     private final LegacyIndexTransactionState legacyIndexState = mock( LegacyIndexTransactionState.class );
@@ -365,12 +383,14 @@ public class KernelTransactionImplementationTest
     private final TransactionHeaderInformationFactory headerInformationFactory =
             mock( TransactionHeaderInformationFactory.class );
     private final FakeClock clock = new FakeClock();
+    private final Pool<KernelTransactionImplementation> pool = mock( Pool.class );
 
     @Before
     public void before()
     {
         when( headerInformation.getAdditionalHeader() ).thenReturn( new byte[0] );
         when( headerInformationFactory.create() ).thenReturn( headerInformation );
+        when( neoStores.getMetaDataStore() ).thenReturn( metaDataStore );
     }
 
     private KernelTransactionImplementation newTransaction()
@@ -379,9 +399,9 @@ public class KernelTransactionImplementationTest
         when(readLayer.acquireStatement()).thenReturn( mock(StoreStatement.class) );
 
         KernelTransactionImplementation transaction = new KernelTransactionImplementation(
-                null, null, null, null, null, recordState, null, neoStore, new NoOpClient(),
+                null, null, null, null, null, recordState, null, neoStores, new NoOpClient(),
                 hooks, null, headerInformationFactory, commitProcess, transactionMonitor, readLayer, legacyIndexState,
-                mock( Pool.class ), clock, TransactionTracer.NULL );
+                pool, mock(ConstraintSemantics.class), clock, TransactionTracer.NULL, new ProcedureCache() );
         transaction.initialize( 0 );
         return transaction;
     }

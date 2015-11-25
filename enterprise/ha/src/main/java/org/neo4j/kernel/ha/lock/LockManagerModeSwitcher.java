@@ -19,58 +19,45 @@
  */
 package org.neo4j.kernel.ha.lock;
 
-import java.net.URI;
-
 import org.neo4j.function.Factory;
 import org.neo4j.kernel.AvailabilityGuard;
-import org.neo4j.kernel.configuration.Config;
 import org.neo4j.kernel.ha.DelegateInvocationHandler;
-import org.neo4j.kernel.ha.HaSettings;
 import org.neo4j.kernel.ha.cluster.AbstractModeSwitcher;
-import org.neo4j.kernel.ha.cluster.HighAvailabilityMemberStateMachine;
+import org.neo4j.kernel.ha.cluster.ModeSwitcherNotifier;
 import org.neo4j.kernel.ha.com.RequestContextFactory;
 import org.neo4j.kernel.ha.com.master.Master;
 import org.neo4j.kernel.impl.locking.Locks;
+import org.neo4j.kernel.lifecycle.LifeSupport;
 
 public class LockManagerModeSwitcher extends AbstractModeSwitcher<Locks>
 {
     private final DelegateInvocationHandler<Master> master;
     private final RequestContextFactory requestContextFactory;
     private final AvailabilityGuard availabilityGuard;
-    private final Config config;
     private final Factory<Locks> locksFactory;
 
-    public LockManagerModeSwitcher( HighAvailabilityMemberStateMachine stateMachine,
+    public LockManagerModeSwitcher( ModeSwitcherNotifier modeSwitcherNotifier,
                                     DelegateInvocationHandler<Locks> delegate, DelegateInvocationHandler<Master> master,
                                     RequestContextFactory requestContextFactory, AvailabilityGuard availabilityGuard,
-                                    Config config, Factory<Locks> locksFactory )
+                                    Factory<Locks> locksFactory )
     {
-        super( stateMachine, delegate );
+        super( modeSwitcherNotifier, delegate );
         this.master = master;
         this.requestContextFactory = requestContextFactory;
         this.availabilityGuard = availabilityGuard;
-        this.config = config;
         this.locksFactory = locksFactory;
     }
 
     @Override
-    protected Locks getMasterImpl()
+    protected Locks getMasterImpl( LifeSupport life )
     {
-        return locksFactory.newInstance();
+        return life.add( locksFactory.newInstance() );
     }
 
     @Override
-    protected Locks getSlaveImpl( URI serverHaUri )
+    protected Locks getSlaveImpl( LifeSupport life )
     {
-        return new SlaveLockManager( locksFactory.newInstance(), requestContextFactory, master.cement(),
-                availabilityGuard,
-                new SlaveLockManager.Configuration()
-                {
-                    @Override
-                    public long getAvailabilityTimeout()
-                    {
-                        return config.get( HaSettings.lock_read_timeout );
-                    }
-                } );
+        return life.add( new SlaveLockManager( locksFactory.newInstance(), requestContextFactory, master.cement(),
+                availabilityGuard ) );
     }
 }

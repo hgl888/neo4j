@@ -19,8 +19,8 @@
  */
 package org.neo4j.cypher.internal.compiler.v2_3.ast.rewriters
 
-import org.neo4j.cypher.internal.compiler.v2_3._
-import org.neo4j.cypher.internal.compiler.v2_3.ast._
+import org.neo4j.cypher.internal.frontend.v2_3.ast._
+import org.neo4j.cypher.internal.frontend.v2_3.{IdentityMap, Rewriter, ast, bottomUp}
 
 object literalReplacement {
   type LiteralReplacements = IdentityMap[Literal, Parameter]
@@ -37,14 +37,12 @@ object literalReplacement {
   private val literalMatcher: PartialFunction[Any, (LiteralReplacements, LiteralReplacements => LiteralReplacements) => LiteralReplacements] = {
     case _: ast.Match | _: ast.Create | _: ast.CreateUnique | _: ast.Merge | _: ast.SetClause | _: ast.Return | _: ast.With =>
       (acc, children) => children(acc)
-    case _: ast.Clause | _: ast.PeriodicCommitHint =>
+    case _: ast.Clause | _: ast.PeriodicCommitHint | _: ast.Limit =>
       (acc, _) => acc
     case n: ast.NodePattern =>
       (acc, _) => n.properties.treeFold(acc)(literalMatcher)
     case r: ast.RelationshipPattern =>
       (acc, _) => r.properties.treeFold(acc)(literalMatcher)
-    case ast.LikePattern(_: ast.StringLiteral) =>
-      (acc, _) => acc
     case ast.ContainerIndex(_, _: ast.StringLiteral) =>
       (acc, _) => acc
     case l: ast.StringLiteral =>

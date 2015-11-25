@@ -27,11 +27,11 @@ import org.neo4j.cluster.member.ClusterMemberAvailability;
 import org.neo4j.com.ServerUtil;
 import org.neo4j.function.BiFunction;
 import org.neo4j.function.Factory;
-import org.neo4j.function.Function;
 import org.neo4j.function.Supplier;
 import org.neo4j.kernel.NeoStoreDataSource;
 import org.neo4j.kernel.configuration.Config;
 import org.neo4j.kernel.ha.DelegateInvocationHandler;
+import org.neo4j.kernel.ha.HaSettings;
 import org.neo4j.kernel.ha.com.master.ConversationManager;
 import org.neo4j.kernel.ha.com.master.Master;
 import org.neo4j.kernel.ha.com.master.MasterServer;
@@ -47,7 +47,7 @@ public class SwitchToMaster implements AutoCloseable
 {
     private LogService logService;
     Factory<ConversationManager> conversationManagerFactory;
-    Function<ConversationManager, Master> masterFactory;
+    BiFunction<ConversationManager, LifeSupport, Master> masterFactory;
     BiFunction<Master, ConversationManager, MasterServer> masterServerFactory;
     private Log userLog;
     private HaIdGeneratorFactory idGeneratorFactory;
@@ -60,10 +60,10 @@ public class SwitchToMaster implements AutoCloseable
     public SwitchToMaster( LogService logService,
             HaIdGeneratorFactory idGeneratorFactory, Config config, Supplier<SlaveFactory> slaveFactorySupplier,
             Factory<ConversationManager> conversationManagerFactory,
-            Function<ConversationManager, Master> masterFactory,
+            BiFunction<ConversationManager, LifeSupport, Master> masterFactory,
             BiFunction<Master, ConversationManager, MasterServer> masterServerFactory,
             DelegateInvocationHandler<Master> masterDelegateHandler, ClusterMemberAvailability clusterMemberAvailability,
-            Supplier<NeoStoreDataSource> dataSourceSupplier)
+            Supplier<NeoStoreDataSource> dataSourceSupplier )
     {
         this.logService = logService;
         this.conversationManagerFactory = conversationManagerFactory;
@@ -89,45 +89,45 @@ public class SwitchToMaster implements AutoCloseable
     {
         userLog.info( "I am %s, moving to master", myId() );
 
-        /*
-         * Synchronizing on the xaDataSourceManager makes sense if you also look at HaKernelPanicHandler. In
-         * particular, it is possible to get a masterIsElected while recovering the database. That is generally
-         * going to break things. Synchronizing on the xaDSM as HaKPH does solves this.
-         */
-        //noinspection SynchronizationOnLocalVariableOrMethodParameter
-//        synchronized ( xaDataSourceManager )
-        {
+        // Do not wait for currently active transactions to complete before continuing switching.
+        // - A master in a cluster is very important, without it the cluster cannot process any write requests
+        // - Awaiting open transactions to complete assumes that this instance just now was a slave that is
+        //   switching to master, which means the previous master where these active transactions were hosted
+        //   is no longer available so these open transactions cannot continue and complete anyway,
+        //   so what's the point waiting for them?
+        // - Read transactions may still be able to complete, but the correct response to failures in those
+        //   is to have them throw transient error exceptions hinting that they should be retried,
+        //   at which point they may get redirected to another instance, or to this instance if it has completed
+        //   the switch until then.
 
-            idGeneratorFactory.switchToMaster();
-            NeoStoreDataSource neoStoreXaDataSource = dataSourceSupplier.get();
-            neoStoreXaDataSource.afterModeSwitch();
+        idGeneratorFactory.switchToMaster();
+        NeoStoreDataSource neoStoreXaDataSource = dataSourceSupplier.get();
+        neoStoreXaDataSource.afterModeSwitch();
 
-            ConversationManager conversationManager = conversationManagerFactory.newInstance();
-            Master master = masterFactory.apply( conversationManager );
+        ConversationManager conversationManager = conversationManagerFactory.newInstance();
+        Master master = masterFactory.apply( conversationManager, haCommunicationLife );
 
-            MasterServer masterServer = masterServerFactory.apply( master, conversationManager );
+        MasterServer masterServer = masterServerFactory.apply( master, conversationManager );
 
-            haCommunicationLife.add( master );
-            haCommunicationLife.add( masterServer );
-            masterDelegateHandler.setDelegate( master );
+        haCommunicationLife.add( masterServer );
+        masterDelegateHandler.setDelegate( master );
 
-            haCommunicationLife.start();
+        haCommunicationLife.start();
 
-            URI masterHaURI = getMasterUri( me, masterServer );
-            clusterMemberAvailability.memberIsAvailable( MASTER, masterHaURI, neoStoreXaDataSource.getStoreId() );
-            userLog.info( "I am %s, successfully moved to master", myId() );
+        URI masterHaURI = getMasterUri( me, masterServer );
+        clusterMemberAvailability.memberIsAvailable( MASTER, masterHaURI, neoStoreXaDataSource.getStoreId() );
+        userLog.info( "I am %s, successfully moved to master", myId() );
 
-            slaveFactorySupplier.get().setStoreId( neoStoreXaDataSource.getStoreId() );
+        slaveFactorySupplier.get().setStoreId( neoStoreXaDataSource.getStoreId() );
 
-            return masterHaURI;
-        }
+        return masterHaURI;
     }
 
     private URI getMasterUri( URI me, MasterServer masterServer )
     {
-        String hostname = ServerUtil.getHostString( masterServer.getSocketAddress() ).contains( "0.0.0.0" ) ?
+        String hostname = config.get( HaSettings.ha_server ).getHost( ServerUtil.getHostString( masterServer.getSocketAddress() ).contains( "0.0.0.0" ) ?
                             me.getHost() :
-                            ServerUtil.getHostString( masterServer.getSocketAddress() );
+                            ServerUtil.getHostString( masterServer.getSocketAddress() ));
 
         int port = masterServer.getSocketAddress().getPort();
 

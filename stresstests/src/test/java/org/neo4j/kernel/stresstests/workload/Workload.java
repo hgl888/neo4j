@@ -5,17 +5,17 @@
  * This file is part of Neo4j.
  *
  * Neo4j is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, either version 3 of the
+ * License, or (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 package org.neo4j.kernel.stresstests.workload;
 
@@ -69,11 +69,12 @@ public class Workload implements Resource
         long now = System.currentTimeMillis();
         long previousReportTime = System.currentTimeMillis();
         long finishLine = runningTimeMillis + now;
-        long lastReport = TimeUnit.SECONDS.toMillis( 10 ) + now;
+        long sampleRate = TimeUnit.SECONDS.toMillis( 10 );
+        long lastReport = sampleRate + now;
         long previousTransactionCount = 0;
+        Thread.sleep( sampleRate );
         do
         {
-            Thread.sleep( 1000 );
             now = System.currentTimeMillis();
             if ( lastReport <= now )
             {
@@ -84,7 +85,12 @@ public class Workload implements Resource
                 previousReportTime = now;
                 previousTransactionCount = currentTransactionCount;
 
-                lastReport = TimeUnit.SECONDS.toMillis( 10 ) + now;
+                lastReport = sampleRate + now;
+                Thread.sleep( sampleRate );
+            }
+            else
+            {
+                Thread.sleep( 10 );
             }
         }
         while ( now < finishLine );

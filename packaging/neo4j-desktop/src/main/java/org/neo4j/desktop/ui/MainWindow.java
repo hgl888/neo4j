@@ -83,7 +83,7 @@ public class MainWindow
         this.debugWindow = new SystemOutDebugWindow();
         this.databaseActions = databaseActions;
 
-        this.frame = new JFrame( "Neo4j Community" );
+        this.frame = new JFrame( "Neo4j Community Edition" );
         this.frame.setIconImages( Graphics.loadIcons() );
         this.sysTray = SysTray.install( new SysTrayActions(), frame );
 
@@ -167,7 +167,7 @@ public class MainWindow
 
     private JPanel createSelectionPanel( JTextField directoryDisplay, JButton selectButton )
     {
-        return withTitledBorder( "Database location", withBoxLayout( BoxLayout.LINE_AXIS,
+        return withTitledBorder( "Database Location", withBoxLayout( BoxLayout.LINE_AXIS,
                 createPanel( directoryDisplay, selectButton ) ) );
     }
 
@@ -204,7 +204,7 @@ public class MainWindow
     private JButton createBrowseButton()
     {
         ActionListener actionListener = new BrowseForDatabaseActionListener( frame, directoryDisplay, model );
-        return Components.createTextButton( ellipsis( "Browse" ), actionListener );
+        return Components.createTextButton( ellipsis( "Choose" ), actionListener );
     }
 
     private JButton createStartButton()

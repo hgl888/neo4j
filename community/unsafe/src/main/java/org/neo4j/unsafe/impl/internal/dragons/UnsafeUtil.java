@@ -19,6 +19,8 @@
  */
 package org.neo4j.unsafe.impl.internal.dragons;
 
+import sun.misc.Unsafe;
+
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
@@ -30,8 +32,6 @@ import java.nio.ByteOrder;
 import java.security.AccessController;
 import java.security.PrivilegedExceptionAction;
 
-import sun.misc.Unsafe;
-
 /**
  * Always check that the Unsafe utilities are available with the {@link UnsafeUtil#assertHasUnsafe} method, before
  * calling any of the other methods.
@@ -41,6 +41,15 @@ import sun.misc.Unsafe;
  */
 public final class UnsafeUtil
 {
+    /**
+     * Whether or not to explicitly dirty the allocated memory. This is off by default.
+     * The {@link UnsafeUtil#allocateMemory(long)} method is not guaranteed to allocate zeroed out memory, but might
+     * often do so by pure chance.
+     * Enabling this feature will make sure that the allocated memory is full of random data, such that we can test
+     * and verify that our code does not assume that memory is clean when allocated.
+     */
+    private static final boolean DIRTY_MEMORY = Boolean.getBoolean( UnsafeUtil.class.getName() + ".DIRTY_MEMORY" );
+
     private static final Unsafe unsafe;
     private static final MethodHandle getAndAddInt;
     private static final MethodHandle getAndSetObject;
@@ -372,7 +381,12 @@ public final class UnsafeUtil
      */
     public static long allocateMemory( long sizeInBytes )
     {
-        return unsafe.allocateMemory( sizeInBytes );
+        final long pointer = unsafe.allocateMemory( sizeInBytes );
+        if ( DIRTY_MEMORY )
+        {
+            setMemory( pointer, sizeInBytes, (byte) 0xA5 );
+        }
+        return pointer;
     }
 
     /**
@@ -737,6 +751,14 @@ public final class UnsafeUtil
     public static void setMemory( long address, long bytes, byte value )
     {
         unsafe.setMemory( address, bytes, value );
+    }
+
+    /**
+     * Copy the given number of bytes from the source address to the destination address.
+     */
+    public static void copyMemory( long srcAddress, long destAddress, long bytes )
+    {
+        unsafe.copyMemory( srcAddress, destAddress, bytes );
     }
 
     /**

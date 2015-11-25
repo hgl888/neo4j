@@ -21,15 +21,16 @@ package org.neo4j.cypher.internal.compiler.v2_3.executionplan.builders
 
 import org.mockito.Matchers._
 import org.mockito.Mockito._
-import org.neo4j.cypher.internal.compiler.v2_3.commands.predicates.Equals
-import org.neo4j.cypher.internal.compiler.v2_3.helpers.NonEmptyList
 import org.neo4j.cypher.internal.compiler.v2_3._
 import org.neo4j.cypher.internal.compiler.v2_3.commands._
 import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions._
+import org.neo4j.cypher.internal.compiler.v2_3.commands.predicates.Equals
 import org.neo4j.cypher.internal.compiler.v2_3.commands.values.TokenType.PropertyKey
 import org.neo4j.cypher.internal.compiler.v2_3.executionplan.PartiallySolvedQuery
 import org.neo4j.cypher.internal.compiler.v2_3.pipes.NodeStartPipe
 import org.neo4j.cypher.internal.compiler.v2_3.spi.PlanContext
+import org.neo4j.cypher.internal.frontend.v2_3.helpers.NonEmptyList
+import org.neo4j.cypher.internal.frontend.v2_3.{ExclusiveBound, InclusiveBound, IndexHintException}
 import org.neo4j.kernel.api.index.IndexDescriptor
 
 class StartPointBuilderTest extends BuilderTest {
@@ -45,7 +46,7 @@ class StartPointBuilderTest extends BuilderTest {
   }
 
   test("plans index seek by prefix") {
-    val range = PrefixSeekRangeExpression(PrefixRange("prefix"))
+    val range = PrefixSeekRangeExpression(PrefixRange(Literal("prefix")))
     val labelName = "Label"
     val propertyName = "prop"
     val q = PartiallySolvedQuery().
@@ -56,7 +57,7 @@ class StartPointBuilderTest extends BuilderTest {
   }
 
   test("plans unique index seek by prefix") {
-    val range = PrefixSeekRangeExpression(PrefixRange("prefix"))
+    val range = PrefixSeekRangeExpression(PrefixRange(Literal("prefix")))
     val labelName = "Label"
     val propertyName = "prop"
     val q = PartiallySolvedQuery().

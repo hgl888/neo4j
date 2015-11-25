@@ -38,7 +38,7 @@ import org.neo4j.io.fs.FileUtils;
 import org.neo4j.io.pagecache.PageCache;
 import org.neo4j.kernel.configuration.Config;
 import org.neo4j.kernel.extension.KernelExtensionFactory;
-import org.neo4j.kernel.impl.store.NeoStore;
+import org.neo4j.kernel.impl.store.MetaDataStore;
 import org.neo4j.kernel.impl.transaction.CommittedTransactionRepresentation;
 import org.neo4j.kernel.impl.transaction.log.CommandWriter;
 import org.neo4j.kernel.impl.transaction.log.LogFile;
@@ -164,7 +164,7 @@ public class StoreCopyClient
     private final FileSystemAbstraction fs;
     private final PageCache pageCache;
     private final Monitor monitor;
-    private boolean forensics;
+    private final boolean forensics;
 
     public StoreCopyClient( File storeDir, Config config, Iterable<KernelExtensionFactory<?>> kernelExtensions,
             LogProvider logProvider, FileSystemAbstraction fs,
@@ -293,9 +293,12 @@ public class StoreCopyClient
                 // Recovery will treat that as last checkpoint and will not try to recover store till new
                 // last closed transaction offset will not overcome old one. Till that happens it will be
                 // impossible for recovery process to restore the store
-                File neoStore = new File( tempStoreDir, NeoStore.DEFAULT_NAME );
-                NeoStore.setRecord( pageCache, neoStore, NeoStore.Position.LAST_CLOSED_TRANSACTION_LOG_BYTE_OFFSET,
-                        LOG_HEADER_SIZE );
+                File neoStore = new File( tempStoreDir, MetaDataStore.DEFAULT_NAME );
+                MetaDataStore.setRecord(
+                        pageCache,
+                        neoStore,
+                        MetaDataStore.Position.LAST_CLOSED_TRANSACTION_LOG_BYTE_OFFSET,
+                        (long) LOG_HEADER_SIZE );
             }
         }
         finally
@@ -357,6 +360,7 @@ public class StoreCopyClient
     {
         if ( cancellationRequest.cancellationRequested() )
         {
+            log.info( "Store copying was cancelled. Cleaning up temp-directories." );
             cleanDirectory( tempStore );
         }
     }

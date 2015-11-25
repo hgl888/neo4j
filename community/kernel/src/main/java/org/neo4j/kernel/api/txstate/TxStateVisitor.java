@@ -27,7 +27,9 @@ import org.neo4j.kernel.api.constraints.NodePropertyExistenceConstraint;
 import org.neo4j.kernel.api.constraints.RelationshipPropertyExistenceConstraint;
 import org.neo4j.kernel.api.constraints.UniquenessConstraint;
 import org.neo4j.kernel.api.exceptions.schema.ConstraintValidationKernelException;
+import org.neo4j.kernel.api.exceptions.schema.CreateConstraintFailureException;
 import org.neo4j.kernel.api.index.IndexDescriptor;
+import org.neo4j.kernel.api.procedures.ProcedureDescriptor;
 import org.neo4j.kernel.api.properties.DefinedProperty;
 import org.neo4j.kernel.impl.api.state.RelationshipChangesForNode;
 
@@ -68,11 +70,13 @@ public interface TxStateVisitor
 
     void visitRemovedUniquePropertyConstraint( UniquenessConstraint element );
 
-    void visitAddedNodePropertyExistenceConstraint( NodePropertyExistenceConstraint element );
+    void visitAddedNodePropertyExistenceConstraint( NodePropertyExistenceConstraint element )
+            throws CreateConstraintFailureException;
 
     void visitRemovedNodePropertyExistenceConstraint( NodePropertyExistenceConstraint element );
 
-    void visitAddedRelationshipPropertyExistenceConstraint( RelationshipPropertyExistenceConstraint element );
+    void visitAddedRelationshipPropertyExistenceConstraint( RelationshipPropertyExistenceConstraint element )
+            throws CreateConstraintFailureException;
 
     void visitRemovedRelationshipPropertyExistenceConstraint( RelationshipPropertyExistenceConstraint element );
 
@@ -85,6 +89,10 @@ public interface TxStateVisitor
     void visitCreatedNodeLegacyIndex( String name, Map<String,String> config );
 
     void visitCreatedRelationshipLegacyIndex( String name, Map<String,String> config );
+
+    void visitCreatedProcedure( ProcedureDescriptor procedureDescriptor );
+
+    void visitDroppedProcedure( ProcedureDescriptor procedureDescriptor );
 
     class Adapter implements TxStateVisitor
     {
@@ -227,6 +235,7 @@ public interface TxStateVisitor
 
         @Override
         public void visitAddedNodePropertyExistenceConstraint( NodePropertyExistenceConstraint element )
+                throws CreateConstraintFailureException
         {
             if ( next != null )
             {
@@ -245,6 +254,7 @@ public interface TxStateVisitor
 
         @Override
         public void visitAddedRelationshipPropertyExistenceConstraint( RelationshipPropertyExistenceConstraint element )
+                throws CreateConstraintFailureException
         {
             if ( next != null )
             {
@@ -304,6 +314,24 @@ public interface TxStateVisitor
             if ( next != null )
             {
                 next.visitCreatedRelationshipLegacyIndex( name, config );
+            }
+        }
+
+        @Override
+        public void visitCreatedProcedure( ProcedureDescriptor procedureDescriptor )
+        {
+            if( next != null )
+            {
+                next.visitCreatedProcedure( procedureDescriptor );
+            }
+        }
+
+        @Override
+        public void visitDroppedProcedure( ProcedureDescriptor procedureDescriptor )
+        {
+            if( next != null )
+            {
+                next.visitDroppedProcedure( procedureDescriptor );
             }
         }
     }

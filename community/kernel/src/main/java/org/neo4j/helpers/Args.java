@@ -151,6 +151,8 @@ public class Args
 
     /**
      * Suitable for main( String[] args )
+     * @param flags list of possible flags (e.g -v or -skip-bad). A flag differs from an option in that it
+     * has no value after it. This list of flags is used for distinguishing between the two.
      * @param args the arguments to parse.
      */
     private Args( Function<String,Option<String>> optionParser, String[] flags, String[] args )
@@ -252,7 +254,15 @@ public class Args
     public Boolean getBoolean( String key, Boolean defaultValue )
     {
         String value = getSingleOptionOrNull( key );
-        return value != null ? Boolean.parseBoolean( value ) : defaultValue;
+
+        // Apparently this condition must be split like this, instead of as an elvis operator,
+        // because defaultValue will, in that case, be evaluated as a primitive boolean and
+        // a NullPointerException will insue. Odd.
+        if ( value != null )
+        {
+            return Boolean.parseBoolean( value );
+        }
+        return defaultValue;
     }
 
     public Boolean getBoolean( String key, Boolean defaultValueIfNotFound,
@@ -493,9 +503,16 @@ public class Args
     }
 
     /**
-     * An option can be specified multiple times. This method will allow interpreting all values for
+     * An option can be specified multiple times; this method will allow interpreting all values for
      * the given key, returning a {@link Collection}. This is the only means of extracting multiple values
      * for any given option. All other methods revolve around zero or one value for an option.
+     *
+     * @param key Key of the option
+     * @param defaultValue Default value value of the option
+     * @param converter Converter to use
+     * @param validators Validators to use
+     * @param <T> The type of the option values
+     * @return The option values
      */
     @SafeVarargs
     public final <T> Collection<T> interpretOptions( String key, Function<String,T> defaultValue,
@@ -511,11 +528,18 @@ public class Args
     }
 
     /**
-     * An option can be specified multiple times. This method will allow interpreting all values for
+     * An option can be specified multiple times; this method will allow interpreting all values for
      * the given key, returning a {@link Collection}. This is the only means of extracting multiple values
      * for any given option. All other methods revolve around zero or one value for an option.
      * This is also the only means of extracting metadata about a options. Metadata can be supplied as part
      * of the option key, like --my-option:Metadata "my value".
+     *
+     * @param key Key of the option
+     * @param defaultValue Default value value of the option
+     * @param converter Converter to use
+     * @param validators Validators to use
+     * @param <T> The type of the option values
+     * @return The option values
      */
     @SafeVarargs
     public final <T> Collection<Option<T>> interpretOptionsWithMetadata( String key, Function<String,T> defaultValue,

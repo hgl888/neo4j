@@ -19,16 +19,14 @@
  */
 package org.neo4j.cypher.internal.compiler.v2_3
 
-import org.neo4j.cypher.internal.compiler.v2_3.ast.Statement
+import org.neo4j.cypher.internal.frontend.v2_3._
+import org.neo4j.cypher.internal.frontend.v2_3.ast.Statement
 
 class SemanticChecker {
-  def check(queryText: String, statement: Statement, notificationLogger: InternalNotificationLogger = devNullLogger,
+  def check(queryText: String, statement: Statement,
             mkException: (String, InputPosition) => CypherException): SemanticState = {
 
     val SemanticCheckResult(semanticState, semanticErrors) = statement.semanticCheck(SemanticState.clean)
-
-    // TODO: Actually replace this mutable-state logger with an immutable structure
-    semanticState.notifications.foreach(notificationLogger += _)
 
     val scopeTreeIssues = ScopeTreeVerifier.verify(semanticState.scopeTree)
     if (scopeTreeIssues.nonEmpty)

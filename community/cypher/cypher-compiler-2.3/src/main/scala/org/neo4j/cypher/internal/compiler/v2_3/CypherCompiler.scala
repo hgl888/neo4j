@@ -20,23 +20,25 @@
 package org.neo4j.cypher.internal.compiler.v2_3
 
 import org.neo4j.cypher.internal.compiler.v2_3.CompilationPhaseTracer.CompilationPhase.{AST_REWRITE, PARSING, SEMANTIC_CHECK}
-import org.neo4j.cypher.internal.compiler.v2_3.ast.{NodePattern, Statement}
 import org.neo4j.cypher.internal.compiler.v2_3.ast.rewriters.{normalizeReturnClauses, normalizeWithClauses}
 import org.neo4j.cypher.internal.compiler.v2_3.codegen.CodeStructure
 import org.neo4j.cypher.internal.compiler.v2_3.executionplan._
 import org.neo4j.cypher.internal.compiler.v2_3.helpers.closing
-import org.neo4j.cypher.internal.compiler.v2_3.notification.{BareNodeSyntaxDeprecatedNotification, InternalNotification}
-import org.neo4j.cypher.internal.compiler.v2_3.parser.CypherParser
 import org.neo4j.cypher.internal.compiler.v2_3.planner._
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.plans.rewriter.LogicalPlanRewriter
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.{CachedMetricsFactory, DefaultQueryPlanner, SimpleMetricsFactory}
 import org.neo4j.cypher.internal.compiler.v2_3.spi.PlanContext
 import org.neo4j.cypher.internal.compiler.v2_3.tracing.rewriters.RewriterStepSequencer
+import org.neo4j.cypher.internal.frontend.v2_3.ast.{LabelName, NodePattern, Statement}
+import org.neo4j.cypher.internal.frontend.v2_3.notification.{BareNodeSyntaxDeprecatedNotification, InternalNotification}
+import org.neo4j.cypher.internal.frontend.v2_3.parser.CypherParser
+import org.neo4j.cypher.internal.frontend.v2_3.{InputPosition, SemanticTable, inSequence}
 import org.neo4j.graphdb.GraphDatabaseService
 import org.neo4j.helpers.Clock
 
 trait AstRewritingMonitor {
   def abortedRewriting(obj: AnyRef)
+  def abortedRewritingDueToLargeDNF(obj: AnyRef)
 }
 
 trait CypherCacheFlushingMonitor[T] {
@@ -56,17 +58,21 @@ trait InfoLogger {
 trait CypherCacheMonitor[T, E] extends CypherCacheHitMonitor[T] with CypherCacheFlushingMonitor[E]
 
 trait AstCacheMonitor extends CypherCacheMonitor[Statement, CacheAccessor[Statement, ExecutionPlan]]
+case class CypherCompilerConfiguration(queryCacheSize: Int,
+                                       statsDivergenceThreshold: Double,
+                                       queryPlanTTL: Long,
+                                       useErrorsOverWarnings: Boolean,
+                                       nonIndexedLabelWarningThreshold: Long)
 
 object CypherCompilerFactory {
   val monitorTag = "cypher2.3"
 
-  def costBasedCompiler(graph: GraphDatabaseService, queryCacheSize: Int, statsDivergenceThreshold: Double,
-                        queryPlanTTL: Long, clock: Clock, structure: CodeStructure[GeneratedQuery], monitors: Monitors,
+  def costBasedCompiler(graph: GraphDatabaseService, config: CypherCompilerConfiguration,
+                        clock: Clock, structure: CodeStructure[GeneratedQuery], monitors: Monitors,
                         logger: InfoLogger,
                         rewriterSequencer: (String) => RewriterStepSequencer,
                         plannerName: Option[CostBasedPlannerName],
-                        runtimeName: Option[RuntimeName],
-                        useErrorsOverWarnings: Boolean): CypherCompiler = {
+                        runtimeName: Option[RuntimeName]): CypherCompiler = {
     val parser = new CypherParser
     val checker = new SemanticChecker
     val rewriter = new ASTRewriter(rewriterSequencer)
@@ -78,7 +84,7 @@ object CypherCompilerFactory {
     val interpretedPlanBuilder = InterpretedPlanBuilder(clock, monitors)
 
     // Pick runtime based on input
-    val runtimeBuilder = RuntimeBuilder.create(runtimeName, interpretedPlanBuilder, compiledPlanBuilder, useErrorsOverWarnings)
+    val runtimeBuilder = RuntimeBuilder.create(runtimeName, interpretedPlanBuilder, compiledPlanBuilder, config.useErrorsOverWarnings)
 
     val costPlanProducer = CostBasedPipeBuilderFactory.create(
       monitors = monitors,
@@ -88,16 +94,16 @@ object CypherCompilerFactory {
       plannerName = plannerName,
       runtimeBuilder = runtimeBuilder,
       semanticChecker = checker,
-      useErrorsOverWarnings = useErrorsOverWarnings
+      useErrorsOverWarnings = config.useErrorsOverWarnings
     )
     val rulePlanProducer = new LegacyExecutablePlanBuilder(monitors, rewriterSequencer)
 
     // Pick planner based on input
     val planBuilder = ExecutablePlanBuilder.create(plannerName, rulePlanProducer,
-                                                   costPlanProducer, planBuilderMonitor, useErrorsOverWarnings)
+                                                   costPlanProducer, planBuilderMonitor, config.useErrorsOverWarnings)
 
-    val execPlanBuilder = new ExecutionPlanBuilder(graph, statsDivergenceThreshold, queryPlanTTL, clock, planBuilder)
-    val planCacheFactory = () => new LRUCache[Statement, ExecutionPlan](queryCacheSize)
+    val execPlanBuilder = new ExecutionPlanBuilder(graph, config, clock, planBuilder)
+    val planCacheFactory = () => new LRUCache[Statement, ExecutionPlan](config.queryCacheSize)
     monitors.addMonitorListener(logStalePlanRemovalMonitor(logger), monitorTag)
     val cacheMonitor = monitors.newMonitor[AstCacheMonitor](monitorTag)
     val cache = new MonitoringCacheAccessor[Statement, ExecutionPlan](cacheMonitor)
@@ -105,16 +111,15 @@ object CypherCompilerFactory {
     new CypherCompiler(parser, checker, execPlanBuilder, rewriter, cache, planCacheFactory, cacheMonitor, monitors)
   }
 
-  def ruleBasedCompiler(graph: GraphDatabaseService, queryCacheSize: Int, statsDivergenceThreshold: Double,
-                        queryPlanTTL: Long, clock: Clock, monitors: Monitors,
+  def ruleBasedCompiler(graph: GraphDatabaseService, config: CypherCompilerConfiguration, clock: Clock, monitors: Monitors,
                         rewriterSequencer: (String) => RewriterStepSequencer): CypherCompiler = {
     val parser = new CypherParser
     val checker = new SemanticChecker
     val rewriter = new ASTRewriter(rewriterSequencer)
     val pipeBuilder = new LegacyExecutablePlanBuilder(monitors, rewriterSequencer)
 
-    val execPlanBuilder = new ExecutionPlanBuilder(graph, statsDivergenceThreshold, queryPlanTTL, clock, pipeBuilder)
-    val planCacheFactory = () => new LRUCache[Statement, ExecutionPlan](queryCacheSize)
+    val execPlanBuilder = new ExecutionPlanBuilder(graph, config, clock, pipeBuilder)
+    val planCacheFactory = () => new LRUCache[Statement, ExecutionPlan](config.queryCacheSize)
     val cacheMonitor = monitors.newMonitor[AstCacheMonitor](monitorTag)
     val cache = new MonitoringCacheAccessor[Statement, ExecutionPlan](cacheMonitor)
 
@@ -157,14 +162,15 @@ case class CypherCompiler(parser: CypherParser,
     val cleanedStatement: Statement = parsedStatement.endoRewrite(inSequence(normalizeReturnClauses(mkException),
                                                                              normalizeWithClauses(mkException)))
     val originalSemanticState = closing(tracer.beginPhase(SEMANTIC_CHECK)) {
-      semanticChecker.check(queryText, cleanedStatement, notificationLogger, mkException)
+      semanticChecker.check(queryText, cleanedStatement, mkException)
     }
+    originalSemanticState.notifications.foreach(notificationLogger += _)
 
     val (rewrittenStatement, extractedParams, postConditions) = closing(tracer.beginPhase(AST_REWRITE)) {
       astRewriter.rewrite(queryText, cleanedStatement, originalSemanticState)
     }
     val postRewriteSemanticState = closing(tracer.beginPhase(SEMANTIC_CHECK)) {
-      semanticChecker.check(queryText, rewrittenStatement, devNullLogger, mkException)
+      semanticChecker.check(queryText, rewrittenStatement, mkException)
     }
 
     val table = SemanticTable(types = postRewriteSemanticState.typeTable, recordedScopes = postRewriteSemanticState.recordedScopes)

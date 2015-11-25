@@ -20,7 +20,8 @@
 package org.neo4j.kernel.impl.api.store;
 
 import org.neo4j.kernel.api.StatementConstants;
-import org.neo4j.kernel.impl.store.NeoStore;
+import org.neo4j.kernel.impl.locking.LockService;
+import org.neo4j.kernel.impl.store.NeoStores;
 import org.neo4j.kernel.impl.store.record.RecordLoad;
 import org.neo4j.kernel.impl.store.record.RelationshipRecord;
 import org.neo4j.kernel.impl.util.InstanceCache;
@@ -31,12 +32,13 @@ import org.neo4j.kernel.impl.util.InstanceCache;
 public class StoreSingleRelationshipCursor extends StoreAbstractRelationshipCursor
 {
     private long relationshipId = -1;
-    private InstanceCache<StoreSingleRelationshipCursor> instanceCache;
+    private final InstanceCache<StoreSingleRelationshipCursor> instanceCache;
 
-    public StoreSingleRelationshipCursor( RelationshipRecord relationshipRecord, NeoStore neoStore,
-            StoreStatement storeStatement, InstanceCache<StoreSingleRelationshipCursor> instanceCache )
+    public StoreSingleRelationshipCursor( RelationshipRecord relationshipRecord, NeoStores neoStores,
+            StoreStatement storeStatement, InstanceCache<StoreSingleRelationshipCursor> instanceCache,
+            LockService lockService )
     {
-        super( relationshipRecord, neoStore, storeStatement );
+        super( relationshipRecord, neoStores, storeStatement, lockService );
         this.instanceCache = instanceCache;
     }
 
@@ -46,6 +48,7 @@ public class StoreSingleRelationshipCursor extends StoreAbstractRelationshipCurs
         return this;
     }
 
+    @Override
     public boolean next()
     {
         if ( relationshipId != StatementConstants.NO_SUCH_RELATIONSHIP )

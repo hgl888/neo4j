@@ -29,7 +29,8 @@ import org.neo4j.kernel.api.KernelTransaction;
 import org.neo4j.kernel.api.exceptions.TransactionFailureException;
 import org.neo4j.kernel.api.properties.DefinedProperty;
 import org.neo4j.kernel.api.properties.Property;
-import org.neo4j.kernel.impl.store.NeoStore;
+import org.neo4j.kernel.impl.store.MetaDataStore;
+import org.neo4j.kernel.impl.store.NeoStores;
 import org.neo4j.kernel.impl.store.NodeStore;
 import org.neo4j.kernel.impl.store.SchemaStore;
 import org.neo4j.kernel.impl.store.record.DynamicRecord;
@@ -48,7 +49,6 @@ import org.neo4j.kernel.impl.store.record.SchemaRule;
 import org.neo4j.kernel.impl.transaction.command.Command;
 import org.neo4j.kernel.impl.transaction.command.Command.Mode;
 import org.neo4j.kernel.impl.transaction.state.RecordAccess.RecordProxy;
-import org.neo4j.kernel.impl.util.ArrayMap;
 import org.neo4j.kernel.impl.util.statistics.IntCounter;
 
 import static org.neo4j.kernel.impl.store.NodeLabelsField.parseLabelsField;
@@ -74,18 +74,22 @@ import static org.neo4j.kernel.impl.store.NodeLabelsField.parseLabelsField;
  */
 public class TransactionRecordState implements RecordState
 {
-    private final NeoStore neoStore;
     private final IntegrityValidator integrityValidator;
     private final NeoStoreTransactionContext context;
+    private final NodeStore nodeStore;
+    private final MetaDataStore metaDataStore;
+    private final SchemaStore schemaStore;
 
-    private RecordChanges<Long, NeoStoreRecord, Void> neoStoreRecord;
+    private RecordChanges<Long,NeoStoreRecord, Void> neoStoreRecord;
     private long lastCommittedTxWhenTransactionStarted;
     private boolean prepared;
 
-    public TransactionRecordState( NeoStore neoStore, IntegrityValidator integrityValidator,
+    public TransactionRecordState( NeoStores neoStores, IntegrityValidator integrityValidator,
                          NeoStoreTransactionContext context )
     {
-        this.neoStore = neoStore;
+        this.nodeStore = neoStores.getNodeStore();
+        this.metaDataStore = neoStores.getMetaDataStore();
+        this.schemaStore = neoStores.getSchemaStore();
         this.integrityValidator = integrityValidator;
         this.context = context;
     }
@@ -105,8 +109,14 @@ public class TransactionRecordState implements RecordState
     public void initialize( long lastCommittedTxWhenTransactionStarted )
     {
         this.lastCommittedTxWhenTransactionStarted = lastCommittedTxWhenTransactionStarted;
-        context.initialize();
         prepared = false;
+    }
+
+    public void clear()
+    {
+        // no point in caching neostore record changes since they are rare, let's simply make sure they are cleared
+        neoStoreRecord = null;
+        context.clear();
     }
 
     @Override
@@ -197,7 +207,7 @@ public class TransactionRecordState implements RecordState
 
         if ( neoStoreRecord != null )
         {
-            for ( RecordProxy<Long, NeoStoreRecord, Void> change : neoStoreRecord.changes() )
+            for ( RecordProxy<Long,NeoStoreRecord, Void> change : neoStoreRecord.changes() )
             {
                 Command.NeoStoreCommand command = new Command.NeoStoreCommand();
                 command.init( change.forReadingData() );
@@ -222,9 +232,9 @@ public class TransactionRecordState implements RecordState
         context.relationshipCreate( id, typeId, startNodeId, endNodeId );
     }
 
-    public ArrayMap<Integer, DefinedProperty> relDelete( long relId )
+    public void relDelete( long relId )
     {
-        return context.relationshipDelete( relId );
+        context.relationshipDelete( relId );
     }
 
     @SafeVarargs
@@ -243,23 +253,13 @@ public class TransactionRecordState implements RecordState
         }
     }
 
-    private NodeStore getNodeStore()
-    {
-        return neoStore.getNodeStore();
-    }
-
-    private SchemaStore getSchemaStore()
-    {
-        return neoStore.getSchemaStore();
-    }
-
     /**
      * Deletes a node by its id, returning its properties which are now removed.
      *
      * @param nodeId The id of the node to delete.
      * @return The properties of the node that were removed during the delete.
      */
-    public ArrayMap<Integer, DefinedProperty> nodeDelete( long nodeId )
+    public void nodeDelete( long nodeId )
     {
         NodeRecord nodeRecord = context.getNodeRecords().getOrLoad( nodeId, null ).forChangingData();
         if ( !nodeRecord.inUse() )
@@ -270,7 +270,7 @@ public class TransactionRecordState implements RecordState
         nodeRecord.setInUse( false );
         nodeRecord.setLabelField( Record.NO_LABELS_FIELD.intValue(),
                 markNotInUse( nodeRecord.getDynamicLabelRecords() ) );
-        return getAndDeletePropertyChain( nodeRecord );
+        getAndDeletePropertyChain( nodeRecord );
     }
 
     private Collection<DynamicRecord> markNotInUse( Collection<DynamicRecord> dynamicLabelRecords )
@@ -282,9 +282,9 @@ public class TransactionRecordState implements RecordState
         return dynamicLabelRecords;
     }
 
-    private ArrayMap<Integer, DefinedProperty> getAndDeletePropertyChain( NodeRecord nodeRecord )
+    private void getAndDeletePropertyChain( NodeRecord nodeRecord )
     {
-        return context.getAndDeletePropertyChain( nodeRecord );
+        context.getAndDeletePropertyChain( nodeRecord );
     }
 
     /**
@@ -461,12 +461,12 @@ public class TransactionRecordState implements RecordState
 
     private static final CommandSorter COMMAND_SORTER = new CommandSorter();
 
-    private RecordProxy<Long, NeoStoreRecord, Void> getOrLoadNeoStoreRecord()
+    private RecordProxy<Long,NeoStoreRecord, Void> getOrLoadNeoStoreRecord()
     {
         // TODO Move this neo store record thingie into RecordAccessSet
         if ( neoStoreRecord == null )
         {
-            neoStoreRecord = new RecordChanges<>( new RecordChanges.Loader<Long, NeoStoreRecord, Void>()
+            neoStoreRecord = new RecordChanges<>( new RecordChanges.Loader<Long,NeoStoreRecord, Void>()
             {
                 @Override
                 public NeoStoreRecord newUnused( Long key, Void additionalData )
@@ -477,7 +477,7 @@ public class TransactionRecordState implements RecordState
                 @Override
                 public NeoStoreRecord load( Long key, Void additionalData )
                 {
-                    return neoStore.asRecord();
+                    return metaDataStore.asRecord();
                 }
 
                 @Override
@@ -486,7 +486,7 @@ public class TransactionRecordState implements RecordState
                 }
 
                 @Override
-                public NeoStoreRecord clone(NeoStoreRecord neoStoreRecord) {
+                public NeoStoreRecord clone(NeoStoreRecord neoStoreRecord ) {
                     // We do not expect to manage the before state, so this operation will not be called.
                     throw new UnsupportedOperationException("Clone on NeoStoreRecord");
                 }
@@ -530,7 +530,7 @@ public class TransactionRecordState implements RecordState
      */
     public void graphRemoveProperty( int propertyKey )
     {
-        RecordProxy<Long, NeoStoreRecord, Void> recordChange = getOrLoadNeoStoreRecord();
+        RecordProxy<Long,NeoStoreRecord, Void> recordChange = getOrLoadNeoStoreRecord();
         context.removeProperty( recordChange, propertyKey );
     }
 
@@ -557,13 +557,13 @@ public class TransactionRecordState implements RecordState
     public void addLabelToNode( int labelId, long nodeId )
     {
         NodeRecord nodeRecord = context.getNodeRecords().getOrLoad( nodeId, null ).forChangingData();
-        parseLabelsField( nodeRecord ).add( labelId, getNodeStore(), getNodeStore().getDynamicLabelStore() );
+        parseLabelsField( nodeRecord ).add( labelId, nodeStore, nodeStore.getDynamicLabelStore() );
     }
 
     public void removeLabelFromNode( int labelId, long nodeId )
     {
         NodeRecord nodeRecord = context.getNodeRecords().getOrLoad( nodeId, null ).forChangingData();
-        parseLabelsField( nodeRecord ).remove( labelId, getNodeStore() );
+        parseLabelsField( nodeRecord ).remove( labelId, nodeStore );
     }
 
     public void setConstraintIndexOwner( IndexRule indexRule, long constraintId )
@@ -575,7 +575,7 @@ public class TransactionRecordState implements RecordState
         indexRule = indexRule.withOwningConstraint( constraintId );
 
         records.clear();
-        records.addAll( getSchemaStore().allocateFrom( indexRule ) );
+        records.addAll( schemaStore.allocateFrom( indexRule ) );
     }
 
     public interface PropertyReceiver

@@ -23,7 +23,7 @@ import org.neo4j.cypher.internal.compiler.v2_3.commands.predicates._
 import org.neo4j.cypher.internal.compiler.v2_3.{CypherOrdering, ExecutionContext}
 import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions.Literal
 import org.neo4j.cypher.internal.compiler.v2_3.pipes.QueryStateHelper
-import org.neo4j.cypher.internal.compiler.v2_3.test_helpers.CypherFunSuite
+import org.neo4j.cypher.internal.frontend.v2_3.test_helpers.CypherFunSuite
 
 class ComparablePredicateTest extends CypherFunSuite {
 
@@ -48,7 +48,7 @@ class ComparablePredicateTest extends CypherFunSuite {
     Double.NaN
 //    null TODO
   ).flatMap {
-    case v: Number => if (v == null) Seq(v) else Seq(v.doubleValue(), v.floatValue(), v.longValue(), v.intValue(), v.shortValue(), v.byteValue(), v)
+    case v: Number => if (v == null) Seq(v) else Seq[Number](v.doubleValue(), v.floatValue(), v.longValue(), v.intValue(), v.shortValue(), v.byteValue(), v)
   }
 
   val textualValues = Seq(

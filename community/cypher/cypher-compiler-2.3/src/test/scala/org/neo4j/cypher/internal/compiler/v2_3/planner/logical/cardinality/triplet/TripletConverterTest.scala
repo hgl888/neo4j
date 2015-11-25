@@ -19,15 +19,14 @@
  */
 package org.neo4j.cypher.internal.compiler.v2_3.planner.logical.cardinality.triplet
 
-import org.neo4j.cypher.internal.compiler.v2_3.ast._
 import org.neo4j.cypher.internal.compiler.v2_3.planner._
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.Cardinality
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.Metrics.QueryGraphSolverInput
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.cardinality.{SpecifiedAndKnown, SpecifiedButUnknown, Unspecified}
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.plans.{IdName, PatternRelationship, SimplePatternLength}
-import org.neo4j.cypher.internal.compiler.v2_3.{LabelId, RelTypeId}
-import org.neo4j.cypher.internal.compiler.v2_3.test_helpers.CypherFunSuite
-import org.neo4j.graphdb.Direction
+import org.neo4j.cypher.internal.frontend.v2_3.ast._
+import org.neo4j.cypher.internal.frontend.v2_3.test_helpers.CypherFunSuite
+import org.neo4j.cypher.internal.frontend.v2_3.{SemanticDirection, LabelId, RelTypeId, SemanticTable}
 
 class TripletConverterTest extends CypherFunSuite with LogicalPlanningTestSupport2 with AstConstructionTestSupport {
 
@@ -36,7 +35,7 @@ class TripletConverterTest extends CypherFunSuite with LogicalPlanningTestSuppor
     val patRel = PatternRelationship(
       name = "r",
       nodes = ("a", "b"),
-      dir = Direction.OUTGOING,
+      dir = SemanticDirection.OUTGOING,
       types = Seq(RelTypeName("KNOWS")_, RelTypeName("ZAPS")_),
       length = SimplePatternLength
     )

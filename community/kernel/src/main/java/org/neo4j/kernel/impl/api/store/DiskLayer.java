@@ -24,6 +24,7 @@ import java.util.Iterator;
 import org.neo4j.collection.primitive.PrimitiveIntIterator;
 import org.neo4j.collection.primitive.PrimitiveLongCollections.PrimitiveLongBaseIterator;
 import org.neo4j.collection.primitive.PrimitiveLongIterator;
+import org.neo4j.function.Factory;
 import org.neo4j.function.Function;
 import org.neo4j.function.Predicate;
 import org.neo4j.function.Predicates;
@@ -44,6 +45,8 @@ import org.neo4j.kernel.api.exceptions.schema.TooManyLabelsException;
 import org.neo4j.kernel.api.index.IndexDescriptor;
 import org.neo4j.kernel.api.index.IndexReader;
 import org.neo4j.kernel.api.index.InternalIndexState;
+import org.neo4j.kernel.api.procedures.ProcedureDescriptor;
+import org.neo4j.kernel.api.procedures.ProcedureSignature;
 import org.neo4j.kernel.api.properties.DefinedProperty;
 import org.neo4j.kernel.api.properties.PropertyKeyIdIterator;
 import org.neo4j.kernel.impl.api.CountsAccessor;
@@ -57,17 +60,16 @@ import org.neo4j.kernel.impl.core.RelationshipTypeTokenHolder;
 import org.neo4j.kernel.impl.core.Token;
 import org.neo4j.kernel.impl.core.TokenNotFoundException;
 import org.neo4j.kernel.impl.store.InvalidRecordException;
-import org.neo4j.kernel.impl.store.NeoStore;
-import org.neo4j.kernel.impl.store.record.NodePropertyConstraintRule;
+import org.neo4j.kernel.impl.store.NeoStores;
 import org.neo4j.kernel.impl.store.NodeStore;
-import org.neo4j.kernel.impl.store.record.PropertyConstraintRule;
-import org.neo4j.kernel.impl.store.RelationshipGroupStore;
-import org.neo4j.kernel.impl.store.record.RelationshipPropertyConstraintRule;
 import org.neo4j.kernel.impl.store.RelationshipStore;
 import org.neo4j.kernel.impl.store.SchemaStorage;
 import org.neo4j.kernel.impl.store.UnderlyingStorageException;
 import org.neo4j.kernel.impl.store.record.IndexRule;
+import org.neo4j.kernel.impl.store.record.NodePropertyConstraintRule;
 import org.neo4j.kernel.impl.store.record.NodeRecord;
+import org.neo4j.kernel.impl.store.record.PropertyConstraintRule;
+import org.neo4j.kernel.impl.store.record.RelationshipPropertyConstraintRule;
 import org.neo4j.kernel.impl.store.record.RelationshipRecord;
 import org.neo4j.kernel.impl.store.record.SchemaRule;
 import org.neo4j.kernel.impl.transaction.state.PropertyLoader;
@@ -81,7 +83,7 @@ import static org.neo4j.kernel.impl.store.record.RecordLoad.CHECK;
 import static org.neo4j.register.Registers.newDoubleLongRegister;
 
 /**
- * Default implementation of StoreReadLayer. Delegates to NeoStore and indexes.
+ * Default implementation of StoreReadLayer. Delegates to NeoStores and indexes.
  */
 public class DiskLayer implements StoreReadLayer
 {
@@ -123,37 +125,37 @@ public class DiskLayer implements StoreReadLayer
     private final LabelTokenHolder labelTokenHolder;
     private final RelationshipTypeTokenHolder relationshipTokenHolder;
 
-    private final NeoStore neoStore;
+    private final NeoStores neoStores;
     private final IndexingService indexService;
     private final NodeStore nodeStore;
-    private final RelationshipGroupStore relationshipGroupStore;
     private final RelationshipStore relationshipStore;
     private final SchemaStorage schemaStorage;
     private final CountsAccessor counts;
     private final PropertyLoader propertyLoader;
 
+    private final Factory<StoreStatement> statementProvider;
+
     public DiskLayer( PropertyKeyTokenHolder propertyKeyTokenHolder, LabelTokenHolder labelTokenHolder,
-            RelationshipTypeTokenHolder relationshipTokenHolder, SchemaStorage schemaStorage, NeoStore neoStore,
-            IndexingService indexService )
+            RelationshipTypeTokenHolder relationshipTokenHolder, SchemaStorage schemaStorage, NeoStores neoStores,
+            IndexingService indexService, Factory<StoreStatement> statementProvider )
     {
         this.relationshipTokenHolder = relationshipTokenHolder;
         this.schemaStorage = schemaStorage;
         this.indexService = indexService;
         this.propertyKeyTokenHolder = propertyKeyTokenHolder;
         this.labelTokenHolder = labelTokenHolder;
-        this.neoStore = neoStore;
-        this.nodeStore = this.neoStore.getNodeStore();
-        this.relationshipStore = this.neoStore.getRelationshipStore();
-        this.relationshipGroupStore = this.neoStore.getRelationshipGroupStore();
-        this.counts = neoStore.getCounts();
-        this.propertyLoader = new PropertyLoader( neoStore );
-
+        this.neoStores = neoStores;
+        this.statementProvider = statementProvider;
+        this.nodeStore = this.neoStores.getNodeStore();
+        this.relationshipStore = this.neoStores.getRelationshipStore();
+        this.counts = neoStores.getCounts();
+        this.propertyLoader = new PropertyLoader( neoStores );
     }
 
     @Override
     public StoreStatement acquireStatement()
     {
-        return neoStore.acquireStatement();
+        return statementProvider.newInstance();
     }
 
     @Override
@@ -212,15 +214,15 @@ public class DiskLayer implements StoreReadLayer
     }
 
     @Override
-    public PrimitiveLongIterator nodesGetFromIndexRangeSeekByNumber( KernelStatement statement,
-                                                                     IndexDescriptor index,
-                                                                     Number lower, boolean includeLower,
-                                                                     Number upper, boolean includeUpper )
+    public PrimitiveLongIterator nodesGetFromInclusiveNumericIndexRangeSeek( KernelStatement statement,
+            IndexDescriptor index,
+            Number lower,
+            Number upper )
             throws IndexNotFoundKernelException
 
     {
         IndexReader reader = statement.getIndexReader( index );
-        return reader.rangeSeekByNumber( lower, includeLower, upper, includeUpper );
+        return reader.rangeSeekByNumberInclusive( lower, upper );
     }
 
     @Override
@@ -334,7 +336,7 @@ public class DiskLayer implements StoreReadLayer
 
     private Iterator<IndexDescriptor> getIndexDescriptorsFor( Predicate<SchemaRule> filter )
     {
-        Iterator<SchemaRule> filtered = filter( filter, neoStore.getSchemaStore().loadAllSchemaRules() );
+        Iterator<SchemaRule> filtered = filter( filter, neoStores.getSchemaStore().loadAllSchemaRules() );
 
         return map( new Function<SchemaRule, IndexDescriptor>()
         {
@@ -385,6 +387,18 @@ public class DiskLayer implements StoreReadLayer
     public double indexUniqueValuesPercentage( IndexDescriptor descriptor ) throws IndexNotFoundKernelException
     {
         return indexService.indexUniqueValuesPercentage( descriptor );
+    }
+
+    @Override
+    public Iterator<ProcedureDescriptor> proceduresGetAll()
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public ProcedureDescriptor procedureGet( ProcedureSignature.ProcedureName name )
+    {
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -565,8 +579,7 @@ public class DiskLayer implements StoreReadLayer
     {
         return new PrimitiveLongBaseIterator()
         {
-            private final NodeStore store = neoStore.getNodeStore();
-            private long highId = store.getHighestPossibleIdInUse();
+            private long highId = nodeStore.getHighestPossibleIdInUse();
             private long currentId;
             private final NodeRecord reusableNodeRecord = new NodeRecord( -1 ); // reused
 
@@ -579,7 +592,7 @@ public class DiskLayer implements StoreReadLayer
                     {
                         try
                         {
-                            NodeRecord record = store.loadRecord( currentId, reusableNodeRecord );
+                            NodeRecord record = nodeStore.loadRecord( currentId, reusableNodeRecord );
                             if ( record != null && record.inUse() )
                             {
                                 return next( record.getId() );
@@ -591,7 +604,7 @@ public class DiskLayer implements StoreReadLayer
                         }
                     }
 
-                    long newHighId = store.getHighestPossibleIdInUse();
+                    long newHighId = nodeStore.getHighestPossibleIdInUse();
                     if ( newHighId > highId )
                     {
                         highId = newHighId;
@@ -611,8 +624,7 @@ public class DiskLayer implements StoreReadLayer
     {
         return new RelationshipIterator.BaseIterator()
         {
-            private final RelationshipStore store = neoStore.getRelationshipStore();
-            private long highId = store.getHighestPossibleIdInUse();
+            private long highId = relationshipStore.getHighestPossibleIdInUse();
             private long currentId;
             private final RelationshipRecord reusableRecord = new RelationshipRecord( -1 ); // reused
 
@@ -625,7 +637,7 @@ public class DiskLayer implements StoreReadLayer
                     {
                         try
                         {
-                            if ( store.fillRecord( currentId, reusableRecord, CHECK ) && reusableRecord.inUse() )
+                            if ( relationshipStore.fillRecord( currentId, reusableRecord, CHECK ) && reusableRecord.inUse() )
                             {
                                 return next( reusableRecord.getId() );
                             }
@@ -636,7 +648,7 @@ public class DiskLayer implements StoreReadLayer
                         }
                     }
 
-                    long newHighId = store.getHighestPossibleIdInUse();
+                    long newHighId = relationshipStore.getHighestPossibleIdInUse();
                     if ( newHighId > highId )
                     {
                         highId = newHighId;

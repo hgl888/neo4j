@@ -19,24 +19,29 @@
  */
 package org.neo4j.cypher.internal.spi.v2_3
 
+import java.net.URL
+
 import org.neo4j.collection.primitive.PrimitiveLongIterator
 import org.neo4j.collection.primitive.base.Empty.EMPTY_PRIMITIVE_LONG_COLLECTION
 import org.neo4j.cypher.InternalException
-import org.neo4j.cypher.internal.compiler.v2_3.MinMaxOrdering.{BY_NUMBER, BY_VALUE, BY_STRING}
+import org.neo4j.cypher.internal.compiler.v2_3.MinMaxOrdering.{BY_NUMBER, BY_STRING, BY_VALUE}
 import org.neo4j.cypher.internal.compiler.v2_3._
+import org.neo4j.cypher.internal.compiler.v2_3.ast.convert.commands.DirectionConverter.toGraphDb
 import org.neo4j.cypher.internal.compiler.v2_3.helpers.JavaConversionSupport._
 import org.neo4j.cypher.internal.compiler.v2_3.helpers.{BeansAPIRelationshipIterator, JavaConversionSupport}
+import org.neo4j.cypher.internal.compiler.v2_3.pipes.matching.PatternNode
 import org.neo4j.cypher.internal.compiler.v2_3.spi._
+import org.neo4j.cypher.internal.frontend.v2_3.{SemanticDirection, Bound, EntityNotFoundException, FailedIndexException}
 import org.neo4j.graphdb.DynamicRelationshipType._
 import org.neo4j.graphdb._
-import org.neo4j.graphdb.factory.GraphDatabaseSettings
+import org.neo4j.graphdb.traversal.{TraversalDescription, Evaluators}
 import org.neo4j.helpers.ThisShouldNotHappenError
-import org.neo4j.kernel.GraphDatabaseAPI
+import org.neo4j.kernel.security.URLAccessValidationError
+import org.neo4j.kernel.{Uniqueness, Traversal, GraphDatabaseAPI}
 import org.neo4j.kernel.api._
 import org.neo4j.kernel.api.constraints.{NodePropertyExistenceConstraint, RelationshipPropertyExistenceConstraint, UniquenessConstraint}
 import org.neo4j.kernel.api.exceptions.schema.{AlreadyConstrainedException, AlreadyIndexedException}
 import org.neo4j.kernel.api.index.{IndexDescriptor, InternalIndexState}
-import org.neo4j.kernel.configuration.Config
 import org.neo4j.kernel.impl.api.KernelStatement
 import org.neo4j.kernel.impl.core.{RelationshipProxy, ThreadToStatementContextBridge}
 import org.neo4j.tooling.GlobalGraphOperations
@@ -58,6 +63,8 @@ final class TransactionBoundQueryContext(graph: GraphDatabaseAPI,
   val relationshipActions = graph.getDependencyResolver.resolveDependency(classOf[RelationshipProxy.RelationshipActions])
 
   def isOpen = open
+
+  private val protocolWhiteList: Seq[String] = Seq("file", "http", "https", "ftp")
 
   def setLabelsOnNode(node: Long, labelIds: Iterator[Int]): Int = labelIds.foldLeft(0) {
     case (count, labelId) => if (statement.dataWriteOperations().nodeAddLabel(node, labelId)) count + 1 else count
@@ -108,6 +115,11 @@ final class TransactionBoundQueryContext(graph: GraphDatabaseAPI,
   def createRelationship(start: Node, end: Node, relType: String) =
     start.createRelationshipTo(end, withName(relType))
 
+  def createRelationship(start: Long, end: Long, relType: Int) = {
+    val relId = statement.dataWriteOperations().relationshipCreate(relType, start, end)
+    relationshipOps.getById(relId)
+  }
+
   def getOrCreateRelTypeId(relTypeName: String): Int =
     statement.tokenWriteOperations().relationshipTypeGetOrCreateForName(relTypeName)
 
@@ -126,9 +138,13 @@ final class TransactionBoundQueryContext(graph: GraphDatabaseAPI,
   def getOrCreateLabelId(labelName: String) =
     statement.tokenWriteOperations().labelGetOrCreateForName(labelName)
 
-  def getRelationshipsForIds(node: Node, dir: Direction, types: Option[Seq[Int]]): Iterator[Relationship] = types match {
-    case None => new BeansAPIRelationshipIterator(statement.readOperations().nodeGetRelationships(node.getId, dir), relationshipActions)
-    case Some(typeIds) => new BeansAPIRelationshipIterator(statement.readOperations().nodeGetRelationships(node.getId, dir, typeIds: _* ), relationshipActions)
+  def getRelationshipsForIds(node: Node, dir: SemanticDirection, types: Option[Seq[Int]]): Iterator[Relationship] = types match {
+    case None =>
+      val relationships = statement.readOperations().nodeGetRelationships(node.getId, toGraphDb(dir))
+      new BeansAPIRelationshipIterator(relationships, relationshipActions)
+    case Some(typeIds) =>
+      val relationships = statement.readOperations().nodeGetRelationships(node.getId, toGraphDb(dir), typeIds: _*)
+      new BeansAPIRelationshipIterator(relationships, relationshipActions)
   }
 
   def indexSeek(index: IndexDescriptor, value: Any) =
@@ -136,58 +152,62 @@ final class TransactionBoundQueryContext(graph: GraphDatabaseAPI,
 
   def indexSeekByRange(index: IndexDescriptor, value: Any) = value match {
 
-    case PrefixRange(prefix) =>
+    case PrefixRange(prefix: String) =>
       indexSeekByPrefixRange(index, prefix)
 
     case range: InequalitySeekRange[Any] =>
-      val groupedRanges = range.groupBy { (bound: Bound[Any]) =>
-        bound.endPoint match {
-          case n: Number => classOf[Number]
-          case s: String => classOf[String]
-          case c: Character => classOf[String]
-          case _ => classOf[Any]
-        }
-      }
-
-      val optNumericRange = groupedRanges.get(classOf[Number]).map(_.asInstanceOf[InequalitySeekRange[Number]])
-      val optStringRange = groupedRanges.get(classOf[String]).map(_.mapBounds(_.toString))
-      val anyRange = groupedRanges.get(classOf[Any])
-
-      if (anyRange.nonEmpty) {
-        // If we get back an exclusion test, the range could return values otherwise it is empty
-        anyRange.get.inclusionTest[Any](BY_VALUE).map { test =>
-          throw new IllegalArgumentException("Cannot compare a property against values that are neither strings nor numbers.")
-        }.getOrElse(Iterator.empty)
-      } else {
-        (optNumericRange, optStringRange) match {
-          case (Some(numericRange), None) => indexSeekByNumericalRange(index, numericRange)
-          case (None, Some(stringRange)) => indexSeekByStringRange(index, stringRange)
-
-          case (Some(numericRange), Some(stringRange)) =>
-            // Consider MATCH (n:Person) WHERE n.prop < 1 AND n.prop > "London":
-            // The order of predicate evaluation is unspecified, i.e.
-            // LabelScan fby Filter(n.prop < 1) fby Filter(n.prop > "London") is a valid plan
-            // If the first filter returns no results, the plan returns no results.
-            // If the first filter returns any result, the following filter will fail since
-            // comparing string against numbers throws an exception. Same for the reverse case.
-            //
-            // Below we simulate this behaviour:
-            //
-            if (indexSeekByNumericalRange( index, numericRange ).isEmpty
-                || indexSeekByStringRange(index, stringRange).isEmpty) {
-              Iterator.empty
-            } else {
-              throw throw new IllegalArgumentException(s"Cannot compare a property against both numbers and strings. They are incomparable.")
-            }
-
-          case (None, None) =>
-            // If we get here, the non-empty list of range bounds was partitioned into two empty ones
-            throw new ThisShouldNotHappenError("Stefan", "Failed to partition range bounds")
-        }
-      }
+      indexSeekByPrefixRange(index, range)
 
     case range =>
       throw new InternalException(s"Unsupported index seek by range: $range")
+  }
+
+  private def indexSeekByPrefixRange(index: IndexDescriptor, range: InequalitySeekRange[Any]): scala.Iterator[Node] = {
+    val groupedRanges = range.groupBy { (bound: Bound[Any]) =>
+      bound.endPoint match {
+        case n: Number => classOf[Number]
+        case s: String => classOf[String]
+        case c: Character => classOf[String]
+        case _ => classOf[Any]
+      }
+    }
+
+    val optNumericRange = groupedRanges.get(classOf[Number]).map(_.asInstanceOf[InequalitySeekRange[Number]])
+    val optStringRange = groupedRanges.get(classOf[String]).map(_.mapBounds(_.toString))
+    val anyRange = groupedRanges.get(classOf[Any])
+
+    if (anyRange.nonEmpty) {
+      // If we get back an exclusion test, the range could return values otherwise it is empty
+      anyRange.get.inclusionTest[Any](BY_VALUE).map { test =>
+        throw new IllegalArgumentException("Cannot compare a property against values that are neither strings nor numbers.")
+      }.getOrElse(Iterator.empty)
+    } else {
+      (optNumericRange, optStringRange) match {
+        case (Some(numericRange), None) => indexSeekByNumericalRange(index, numericRange)
+        case (None, Some(stringRange)) => indexSeekByStringRange(index, stringRange)
+
+        case (Some(numericRange), Some(stringRange)) =>
+          // Consider MATCH (n:Person) WHERE n.prop < 1 AND n.prop > "London":
+          // The order of predicate evaluation is unspecified, i.e.
+          // LabelScan fby Filter(n.prop < 1) fby Filter(n.prop > "London") is a valid plan
+          // If the first filter returns no results, the plan returns no results.
+          // If the first filter returns any result, the following filter will fail since
+          // comparing string against numbers throws an exception. Same for the reverse case.
+          //
+          // Below we simulate this behaviour:
+          //
+          if (indexSeekByNumericalRange(index, numericRange).isEmpty
+            || indexSeekByStringRange(index, stringRange).isEmpty) {
+            Iterator.empty
+          } else {
+            throw new IllegalArgumentException(s"Cannot compare a property against both numbers and strings. They are incomparable.")
+          }
+
+        case (None, None) =>
+          // If we get here, the non-empty list of range bounds was partitioned into two empty ones
+          throw new ThisShouldNotHappenError("Stefan", "Failed to partition range bounds")
+      }
+    }
   }
 
   private def indexSeekByPrefixRange(index: IndexDescriptor, prefix: String): scala.Iterator[Node] = {
@@ -197,18 +217,17 @@ final class TransactionBoundQueryContext(graph: GraphDatabaseAPI,
 
   private def indexSeekByNumericalRange(index: IndexDescriptor, range: InequalitySeekRange[Number]): scala.Iterator[Node] = {
     val readOps = statement.readOperations()
-    val propertyKeyId = index.getPropertyKeyId
-    val matchingNodes: PrimitiveLongIterator = range match {
+    val matchingNodes: PrimitiveLongIterator = (range match {
 
       case rangeLessThan: RangeLessThan[Number] =>
         rangeLessThan.limit(BY_NUMBER).map { limit =>
           readOps.nodesGetFromIndexRangeSeekByNumber( index, null, false, limit.endPoint, limit.isInclusive )
-        }.getOrElse(EMPTY_PRIMITIVE_LONG_COLLECTION.iterator)
+        }
 
       case rangeGreaterThan: RangeGreaterThan[Number] =>
         rangeGreaterThan.limit(BY_NUMBER).map { limit =>
           readOps.nodesGetFromIndexRangeSeekByNumber( index, limit.endPoint, limit.isInclusive, null, false )
-        }.getOrElse(EMPTY_PRIMITIVE_LONG_COLLECTION.iterator)
+        }
 
       case RangeBetween(rangeGreaterThan, rangeLessThan) =>
         rangeGreaterThan.limit(BY_NUMBER).flatMap { greaterThanLimit =>
@@ -218,9 +237,8 @@ final class TransactionBoundQueryContext(graph: GraphDatabaseAPI,
               greaterThanLimit.endPoint, greaterThanLimit.isInclusive,
               lessThanLimit.endPoint, lessThanLimit.isInclusive )
           }
-        }.getOrElse(EMPTY_PRIMITIVE_LONG_COLLECTION.iterator)
-    }
-
+        }
+    }).getOrElse(EMPTY_PRIMITIVE_LONG_COLLECTION.iterator)
     JavaConversionSupport.mapToScalaENFXSafe(matchingNodes)(nodeOps.getById)
   }
 
@@ -254,7 +272,7 @@ final class TransactionBoundQueryContext(graph: GraphDatabaseAPI,
   }
 
   def indexScan(index: IndexDescriptor) =
-    mapToScala(statement.readOperations().nodesGetFromIndexScan(index))(nodeOps.getById)
+    mapToScalaENFXSafe(statement.readOperations().nodesGetFromIndexScan(index))(nodeOps.getById)
 
   def uniqueIndexSeek(index: IndexDescriptor, value: Any): Option[Node] = {
     val nodeId: Long = statement.readOperations().nodeGetFromUniqueIndexSeek(index, value)
@@ -269,9 +287,11 @@ final class TransactionBoundQueryContext(graph: GraphDatabaseAPI,
   def getNodesByLabel(id: Int): Iterator[Node] =
     JavaConversionSupport.mapToScalaENFXSafe(statement.readOperations().nodesGetForLabel(id))(nodeOps.getById)
 
-  def nodeGetDegree(node: Long, dir: Direction): Int = statement.readOperations().nodeGetDegree(node, dir)
+  def nodeGetDegree(node: Long, dir: SemanticDirection): Int =
+    statement.readOperations().nodeGetDegree(node, toGraphDb(dir))
 
-  def nodeGetDegree(node: Long, dir: Direction, relTypeId: Int): Int = statement.readOperations().nodeGetDegree(node, dir, relTypeId)
+  def nodeGetDegree(node: Long, dir: SemanticDirection, relTypeId: Int): Int =
+    statement.readOperations().nodeGetDegree(node, toGraphDb(dir), relTypeId)
 
   override def nodeIsDense(node: Long): Boolean = statement.readOperations().nodeIsDense(node)
 
@@ -321,7 +341,7 @@ final class TransactionBoundQueryContext(graph: GraphDatabaseAPI,
       graph.index.forNodes(name).query(query).iterator().asScala
 
     def isDeleted(n: Node): Boolean =
-      kernelStatement.txState().nodeIsDeletedInThisTx(n.getId)
+      kernelStatement.hasTxStateWithChanges && kernelStatement.txState().nodeIsDeletedInThisTx(n.getId)
   }
 
   class RelationshipOperations extends BaseOperations[Relationship] {
@@ -362,7 +382,7 @@ final class TransactionBoundQueryContext(graph: GraphDatabaseAPI,
       graph.index.forRelationships(name).query(query).iterator().asScala
 
     def isDeleted(r: Relationship): Boolean =
-      kernelStatement.txState().relationshipIsDeletedInThisTx(r.getId)
+      kernelStatement.hasTxStateWithChanges && kernelStatement.txState().relationshipIsDeletedInThisTx(r.getId)
   }
 
   def getOrCreatePropertyKeyId(propertyKey: String) =
@@ -441,9 +461,13 @@ final class TransactionBoundQueryContext(graph: GraphDatabaseAPI,
   def dropRelationshipPropertyExistenceConstraint(relTypeId: Int, propertyKeyId: Int) =
     statement.schemaWriteOperations().constraintDrop(new RelationshipPropertyExistenceConstraint(relTypeId, propertyKeyId))
 
-  override def hasLocalFileAccess: Boolean = graph match {
-    case db: GraphDatabaseAPI => db.getDependencyResolver.resolveDependency(classOf[Config]).get(GraphDatabaseSettings.allow_file_urls)
-    case _ => true
+  override def getImportURL(url: URL): Either[String,URL] = graph match {
+    case db: GraphDatabaseAPI =>
+      try {
+        Right(db.validateURLAccess(url))
+      } catch {
+        case error: URLAccessValidationError => Left(error.getMessage)
+      }
   }
 
   def relationshipStartNode(rel: Relationship) = rel.getStartNode
@@ -458,5 +482,35 @@ final class TransactionBoundQueryContext(graph: GraphDatabaseAPI,
 
     tx = graph.beginTx()
     statement = txBridge.get()
+  }
+
+  // Legacy dependency between kernel and compiler
+  override def variableLengthPathExpand(node: PatternNode,
+                                        realNode: Node,
+                                        minHops: Option[Int],
+                                        maxHops: Option[Int],
+                                        direction: SemanticDirection,
+                                        relTypes: Seq[String]): Iterator[Path] = {
+    val depthEval = (minHops, maxHops) match {
+      case (None, None) => Evaluators.fromDepth(1)
+      case (Some(min), None) => Evaluators.fromDepth(min)
+      case (None, Some(max)) => Evaluators.includingDepths(1, max)
+      case (Some(min), Some(max)) => Evaluators.includingDepths(min, max)
+    }
+
+    val baseTraversalDescription: TraversalDescription = Traversal.description()
+      .evaluator(depthEval)
+      .uniqueness(Uniqueness.RELATIONSHIP_PATH)
+
+    val traversalDescription = if (relTypes.isEmpty) {
+      baseTraversalDescription.expand(Traversal.expanderForAllTypes(toGraphDb(direction)))
+    } else {
+      val emptyExpander = Traversal.emptyExpander()
+      val expander = relTypes.foldLeft(emptyExpander) {
+        case (e, t) => e.add(DynamicRelationshipType.withName(t), toGraphDb(direction))
+      }
+      baseTraversalDescription.expand(expander)
+    }
+    traversalDescription.traverse(realNode).iterator().asScala
   }
 }

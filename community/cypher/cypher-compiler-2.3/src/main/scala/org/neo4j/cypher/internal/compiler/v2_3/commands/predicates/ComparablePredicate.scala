@@ -23,6 +23,7 @@ import org.neo4j.cypher.internal.compiler.v2_3._
 import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions.{Expression, Identifier, Literal}
 import org.neo4j.cypher.internal.compiler.v2_3.helpers.IsCollection
 import org.neo4j.cypher.internal.compiler.v2_3.pipes.QueryState
+import org.neo4j.cypher.internal.frontend.v2_3.IncomparableValuesException
 import org.neo4j.graphdb.{Node, Relationship}
 
 abstract sealed class ComparablePredicate(val left: Expression, val right: Expression) extends Predicate with Comparer {
@@ -47,6 +48,13 @@ abstract sealed class ComparablePredicate(val left: Expression, val right: Expre
   def arguments = Seq(left, right)
 
   def symbolTableDependencies = left.symbolTableDependencies ++ right.symbolTableDependencies
+
+  def other(e: Expression): Expression = if (e != left) {
+    assert(e == right, "This expression is neither LHS nor RHS")
+    left
+  } else {
+    right
+  }
 }
 
 case class Equals(a: Expression, b: Expression) extends Predicate with Comparer {
@@ -68,6 +76,8 @@ case class Equals(a: Expression, b: Expression) extends Predicate with Comparer 
       case (l, r: Node) if !l.isInstanceOf[Node]                 => incomparable(l, r)
       case (l: Relationship, r) if !r.isInstanceOf[Relationship] => incomparable(l, r)
       case (l, r: Relationship) if !l.isInstanceOf[Relationship] => incomparable(l, r)
+      case (l: String, r: Character)                             => Some(l == r.toString)
+      case (l: Character, r: String)                             => Some(l.toString == r)
       case _                                                     => Some(a1 == b1)
     }
   }

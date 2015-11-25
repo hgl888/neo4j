@@ -39,17 +39,17 @@ public enum IdType
     NEOSTORE_BLOCK( false ),
     SCHEMA( 35, false ),
     NODE_LABELS( 35, true ),
-    RELATIONSHIP_GROUP( 35, true );
+    RELATIONSHIP_GROUP( 35, false );
 
     private final long max;
     private final boolean allowAggressiveReuse;
 
-    private IdType( boolean allowAggressiveReuse )
+    IdType( boolean allowAggressiveReuse )
     {
         this( 32, allowAggressiveReuse );
     }
 
-    private IdType( int bits, boolean allowAggressiveReuse )
+    IdType( int bits, boolean allowAggressiveReuse )
     {
         this.allowAggressiveReuse = allowAggressiveReuse;
         this.max = (long)Math.pow( 2, bits )-1;
@@ -64,7 +64,7 @@ public enum IdType
     {
         return allowAggressiveReuse;
     }
-    
+
     public int getGrabSize()
     {
         return allowAggressiveReuse ? 50000 : 1024;

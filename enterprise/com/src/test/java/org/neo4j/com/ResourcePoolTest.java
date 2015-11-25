@@ -19,9 +19,7 @@
  */
 package org.neo4j.com;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import org.junit.Test;
 
 import java.util.LinkedList;
 import java.util.List;
@@ -31,8 +29,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.junit.Test;
 import org.neo4j.helpers.FakeClock;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 public class ResourcePoolTest
 {
@@ -191,7 +192,7 @@ public class ResourcePoolTest
 
         StatefulMonitor stateMonitor = new StatefulMonitor();
         FakeClock clock = new FakeClock();
-        final ResourcePool<Something> pool = getResourcePool( stateMonitor, clock, poolMinSize );
+        final SomethingResourcePool pool = getResourcePool( stateMonitor, clock, poolMinSize );
 
         acquireResourcesAndExceedTimeout( pool, clock, poolMaxSize );
 
@@ -210,6 +211,7 @@ public class ResourcePoolTest
         assertEquals( poolMinSize, stateMonitor.targetSize.get() );
         // Only pooled resources must be used, disposing what is in excess
         // +1 that was used to trigger exceed timeout check
+        assertEquals( poolMinSize, pool.unusedSize() );
         assertEquals( poolMaxSize - poolMinSize + 1, stateMonitor.disposed.get() );
     }
 
@@ -223,7 +225,7 @@ public class ResourcePoolTest
 
         StatefulMonitor stateMonitor = new StatefulMonitor();
         FakeClock clock = new FakeClock();
-        final ResourcePool<Something> pool = getResourcePool( stateMonitor, clock, poolMinSize );
+        final SomethingResourcePool pool = getResourcePool( stateMonitor, clock, poolMinSize );
 
         acquireResourcesAndExceedTimeout( pool, clock, poolMaxSize );
 
@@ -252,6 +254,7 @@ public class ResourcePoolTest
         assertEquals( afterPeekPoolSize, stateMonitor.targetSize.get() );
         // only the excess from the maximum size down to after peek usage size must have been disposed
         // +1 that was used to trigger exceed timeout check
+        assertEquals( afterPeekPoolSize, pool.unusedSize() );
         assertEquals( poolMaxSize - afterPeekPoolSize + 1, stateMonitor.disposed.get() );
     }
 
@@ -265,7 +268,7 @@ public class ResourcePoolTest
 
         StatefulMonitor stateMonitor = new StatefulMonitor();
         FakeClock clock = new FakeClock();
-        final ResourcePool<Something> pool = getResourcePool( stateMonitor, clock, poolMinSize );
+        final SomethingResourcePool pool = getResourcePool( stateMonitor, clock, poolMinSize );
 
         acquireResourcesAndExceedTimeout( pool, clock, poolMaxSize );
 
@@ -291,6 +294,7 @@ public class ResourcePoolTest
         assertEquals( bellowPoolMinSize, stateMonitor.currentPeakSize.get() );
         // target size should remain at pool min size
         assertEquals( poolMinSize, stateMonitor.targetSize.get() );
+        assertEquals( poolMinSize, pool.unusedSize() );
         // only the excess from the pool max size down to min size must have been disposed
         // +1 that was used to trigger initial exceed timeout check
         assertEquals( poolMaxSize - poolMinSize + 1, stateMonitor.disposed.get() );
@@ -329,7 +333,7 @@ public class ResourcePoolTest
         }
     }
 
-    private ResourcePool<Something> getResourcePool( StatefulMonitor stateMonitor, FakeClock clock, int minSize )
+    private SomethingResourcePool getResourcePool( StatefulMonitor stateMonitor, FakeClock clock, int minSize )
     {
         ResourcePool.CheckStrategy.TimeoutCheckStrategy timeoutCheckStrategy =
                 new ResourcePool.CheckStrategy.TimeoutCheckStrategy( TIMEOUT_MILLIS, clock );
@@ -369,6 +373,11 @@ public class ResourcePoolTest
         {
             return !resource.closed;
         }
+
+        public int unusedSize()
+        {
+            return unused.size();
+        }
     }
 
     private class ResourceHolder implements Runnable
@@ -377,7 +386,8 @@ public class ResourcePoolTest
         private final CountDownLatch released = new CountDownLatch( 1 );
         private final CountDownLatch onAcquire;
         private final ResourcePool pool;
-        private final AtomicBoolean release = new AtomicBoolean(  );
+        private final AtomicBoolean release = new AtomicBoolean();
+        private volatile Thread runner;
 
         private ResourceHolder( ResourcePool pool, CountDownLatch onAcquire )
         {
@@ -388,6 +398,7 @@ public class ResourcePoolTest
         @Override
         public void run()
         {
+            runner = Thread.currentThread();
             try
             {
                 pool.acquire();
@@ -419,6 +430,17 @@ public class ResourcePoolTest
             try
             {
                 released.await();
+
+                Thread runner;
+                do
+                {
+                    // Wait to observe thread running this ResourceHolder.
+                    // If we don't, then the thread can continue running for a little while after releasing, which can
+                    // result in racy changes to the StatefulMonitor.
+                    runner = this.runner;
+                }
+                while ( runner == null );
+                runner.join();
             }
             catch ( InterruptedException e )
             {

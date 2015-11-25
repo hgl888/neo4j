@@ -19,17 +19,18 @@
  */
 package org.neo4j.cypher.internal.compiler.v2_3.pipes
 
-import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{Effects, ReadsNodes, ReadsRelationships}
+import org.neo4j.cypher.internal.compiler.v2_3.ExecutionContext
+import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{ReadsAllNodes, Effects, ReadsRelationships}
 import org.neo4j.cypher.internal.compiler.v2_3.planDescription.InternalPlanDescription.Arguments.ExpandExpression
-import org.neo4j.cypher.internal.compiler.v2_3.symbols._
-import org.neo4j.cypher.internal.compiler.v2_3.{ExecutionContext, InternalException}
-import org.neo4j.graphdb.{Direction, Node, Relationship}
+import org.neo4j.cypher.internal.frontend.v2_3.{SemanticDirection, InternalException}
+import org.neo4j.cypher.internal.frontend.v2_3.symbols._
+import org.neo4j.graphdb.{Node, Relationship}
 
 case class ExpandAllPipe(source: Pipe,
                          fromName: String,
                          relName: String,
                          toName: String,
-                         dir: Direction,
+                         dir: SemanticDirection,
                          types: LazyTypes)(val estimatedCardinality: Option[Double] = None)
                         (implicit pipeMonitor: PipeMonitor)
   extends PipeWithSource(source, pipeMonitor) with RonjaPipe {
@@ -62,7 +63,7 @@ case class ExpandAllPipe(source: Pipe,
 
   val symbols = source.symbols.add(toName, CTNode).add(relName, CTRelationship)
 
-  override def localEffects = Effects(ReadsNodes, ReadsRelationships)
+  override def localEffects = Effects(ReadsAllNodes, ReadsRelationships)
 
   def dup(sources: List[Pipe]): Pipe = {
     val (source :: Nil) = sources

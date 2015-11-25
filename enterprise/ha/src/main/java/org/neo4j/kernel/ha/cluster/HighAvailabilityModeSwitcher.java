@@ -35,13 +35,13 @@ import org.neo4j.cluster.protocol.election.Election;
 import org.neo4j.function.Supplier;
 import org.neo4j.helpers.CancellationRequest;
 import org.neo4j.helpers.Functions;
+import org.neo4j.helpers.Listeners;
 import org.neo4j.kernel.ha.store.HighAvailabilityStoreFailureException;
-import org.neo4j.kernel.ha.store.InconsistentlyUpgradedClusterException;
 import org.neo4j.kernel.ha.store.UnableToCopyStoreFromOldMasterException;
-import org.neo4j.kernel.ha.store.UnavailableMembersException;
 import org.neo4j.kernel.impl.logging.LogService;
 import org.neo4j.kernel.impl.store.MismatchingStoreIdException;
 import org.neo4j.kernel.impl.store.StoreId;
+import org.neo4j.kernel.impl.transaction.state.DataSourceManager;
 import org.neo4j.kernel.lifecycle.LifeSupport;
 import org.neo4j.kernel.lifecycle.Lifecycle;
 import org.neo4j.logging.Log;
@@ -52,19 +52,21 @@ import static org.neo4j.helpers.NamedThreadFactory.named;
 import static org.neo4j.helpers.Uris.parameter;
 
 /**
- * Performs the internal switches from pending to slave/master, by listening for
+ * Performs the internal switches in various services from pending to slave/master, by listening for
  * {@link HighAvailabilityMemberChangeEvent}s. When finished it will invoke
  * {@link ClusterMemberAvailability#memberIsAvailable(String, URI, StoreId)} to announce it's new status to the
  * cluster.
  */
-public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListener, BindingListener, Lifecycle
+public class HighAvailabilityModeSwitcher
+        implements HighAvailabilityMemberListener, ModeSwitcherNotifier, BindingListener, Lifecycle
 {
-
     public static final String MASTER = "master";
     public static final String SLAVE = "slave";
     public static final String UNKNOWN = "UNKNOWN";
 
     public static final String INADDR_ANY = "0.0.0.0";
+
+    private Iterable<ModeSwitcher> modeSwitchListeners = Listeners.newListeners();
 
     private volatile URI masterHaURI;
     private volatile URI slaveHaURI;
@@ -97,6 +99,7 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
     private volatile Future<?> modeSwitcherFuture;
     private volatile HighAvailabilityMemberState currentTargetState;
     private final AtomicBoolean canAskForElections = new AtomicBoolean( true );
+    private final DataSourceManager neoStoreDataSourceSupplier;
 
     public HighAvailabilityModeSwitcher( SwitchToSlave switchToSlave,
                                          SwitchToMaster switchToMaster,
@@ -104,7 +107,8 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
                                          ClusterMemberAvailability clusterMemberAvailability,
                                          ClusterClient clusterClient,
                                          Supplier<StoreId> storeIdSupplier,
-                                         InstanceId instanceId, LogService logService )
+                                         InstanceId instanceId, LogService logService,
+                                         DataSourceManager neoStoreDataSourceSupplier )
     {
         this.switchToSlave = switchToSlave;
         this.switchToMaster = switchToMaster;
@@ -115,6 +119,7 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
         this.instanceId = instanceId;
         this.msgLog = logService.getInternalLog( getClass() );
         this.userLog = logService.getUserLog( getClass() );
+        this.neoStoreDataSourceSupplier = neoStoreDataSourceSupplier;
         this.haCommunicationLife = new LifeSupport();
     }
 
@@ -196,6 +201,18 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
         stateChanged( event );
     }
 
+    @Override
+    public void addModeSwitcher( ModeSwitcher modeSwitcher )
+    {
+        modeSwitchListeners = Listeners.addListener( modeSwitcher, modeSwitchListeners );
+    }
+
+    @Override
+    public void removeModeSwitcher( ModeSwitcher modeSwitcher )
+    {
+        modeSwitchListeners = Listeners.removeListener( modeSwitcher, modeSwitchListeners );
+    }
+
     public void forceElections()
     {
         if ( canAskForElections.compareAndSet( true, false ) )
@@ -238,16 +255,8 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
                 switchToSlave();
                 break;
             case PENDING:
-                if ( event.getOldState().equals( HighAvailabilityMemberState.SLAVE ) )
-                {
-                    clusterMemberAvailability.memberIsUnavailable( SLAVE );
-                }
-                else if ( event.getOldState().equals( HighAvailabilityMemberState.MASTER ) )
-                {
-                    clusterMemberAvailability.memberIsUnavailable( MASTER );
-                }
 
-                switchToPending();
+                switchToPending( event.getOldState() );
                 break;
             default:
                 // do nothing
@@ -262,15 +271,30 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
             @Override
             public void run()
             {
-                // We just got scheduled. Maybe we are already obsolete - test
-                if ( cancellationHandle.cancellationRequested() )
+                if ( currentTargetState != HighAvailabilityMemberState.TO_MASTER )
                 {
-                    msgLog.info( "Switch to master cancelled in the beginning of switching to master." );
                     return;
                 }
 
-                if ( currentTargetState != HighAvailabilityMemberState.TO_MASTER )
+                // We just got scheduled. Maybe we are already obsolete - test
+                if ( cancellationHandle.cancellationRequested() )
                 {
+                    msgLog.info( "Switch to master cancelled on start." );
+                    return;
+                }
+
+                Listeners.notifyListeners( modeSwitchListeners, new Listeners.Notification<ModeSwitcher>()
+                {
+                    @Override
+                    public void notify( ModeSwitcher listener )
+                    {
+                        listener.switchToMaster();
+                    }
+                } );
+
+                if ( cancellationHandle.cancellationRequested() )
+                {
+                    msgLog.info( "Switch to master cancelled before ha communication started." );
                     return;
                 }
 
@@ -305,7 +329,7 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
          */
         if ( getServerId( availableMasterId ).equals( instanceId ) )
         {
-            msgLog.error( "I (" + me + ") tried to switch to slave for myself as master (" + availableMasterId + ")"  );
+            msgLog.error( "I (" + me + ") tried to switch to slave for myself as master (" + availableMasterId + ")" );
             return;
         }
         final AtomicLong wait = new AtomicLong();
@@ -320,8 +344,29 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
                     return; // Already switched - this can happen if a second master becomes available while waiting
                 }
 
+                if ( cancellationHandle.cancellationRequested() )
+                {
+                    msgLog.info( "Switch to slave cancelled on start." );
+                    return;
+                }
+
+                Listeners.notifyListeners( modeSwitchListeners, new Listeners.Notification<ModeSwitcher>()
+                {
+                    @Override
+                    public void notify( ModeSwitcher listener )
+                    {
+                        listener.switchToSlave();
+                    }
+                } );
+
                 try
                 {
+                    if ( cancellationHandle.cancellationRequested() )
+                    {
+                        msgLog.info( "Switch to slave cancelled before ha communication started." );
+                        return;
+                    }
+
                     haCommunicationLife.shutdown();
                     haCommunicationLife = new LifeSupport();
 
@@ -385,7 +430,7 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
         }, cancellationHandle );
     }
 
-    private void switchToPending()
+    private void switchToPending( final HighAvailabilityMemberState oldState )
     {
         msgLog.info( "I am %s, moving to pending", instanceId );
 
@@ -394,6 +439,37 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
             @Override
             public void run()
             {
+                if ( cancellationHandle.cancellationRequested() )
+                {
+                    msgLog.info( "Switch to pending cancelled on start." );
+                    return;
+                }
+
+                if ( oldState.equals( HighAvailabilityMemberState.SLAVE ) )
+                {
+                    clusterMemberAvailability.memberIsUnavailable( SLAVE );
+                }
+                else if ( oldState.equals( HighAvailabilityMemberState.MASTER ) )
+                {
+                    clusterMemberAvailability.memberIsUnavailable( MASTER );
+                }
+
+                Listeners.notifyListeners( modeSwitchListeners, new Listeners.Notification<ModeSwitcher>()
+                {
+                    @Override
+                    public void notify( ModeSwitcher listener )
+                    {
+                        listener.switchToPending();
+                    }
+                } );
+                neoStoreDataSourceSupplier.getDataSource().beforeModeSwitch();
+
+                if ( cancellationHandle.cancellationRequested() )
+                {
+                    msgLog.info( "Switch to pending cancelled before ha communication shutdown." );
+                    return;
+                }
+
                 haCommunicationLife.shutdown();
                 haCommunicationLife = new LifeSupport();
             }
@@ -419,8 +495,7 @@ public class HighAvailabilityModeSwitcher implements HighAvailabilityMemberListe
             {
                 modeSwitcherFuture.get();
             }
-            catch ( UnableToCopyStoreFromOldMasterException | InconsistentlyUpgradedClusterException |
-                    UnavailableMembersException e )
+            catch ( UnableToCopyStoreFromOldMasterException e )
             {
                 throw e;
             }

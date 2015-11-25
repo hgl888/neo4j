@@ -29,7 +29,6 @@ import java.util.Iterator;
 
 import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.collection.Visitor;
-import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.io.pagecache.PageCache;
 import org.neo4j.io.pagecache.PageCursor;
 import org.neo4j.kernel.IdGeneratorFactory;
@@ -39,7 +38,6 @@ import org.neo4j.kernel.impl.store.record.DynamicRecord;
 import org.neo4j.kernel.impl.store.record.NodeRecord;
 import org.neo4j.kernel.impl.store.record.Record;
 import org.neo4j.kernel.impl.util.Bits;
-import org.neo4j.kernel.monitoring.Monitors;
 import org.neo4j.logging.LogProvider;
 
 import static org.neo4j.io.pagecache.PagedFile.PF_EXCLUSIVE_LOCK;
@@ -77,21 +75,17 @@ public class NodeStore extends AbstractRecordStore<NodeRecord>
     // in_use(byte)+next_rel_id(int)+next_prop_id(int)+labels(5)+extra(byte)
     public static final int RECORD_SIZE = 15;
 
-    private DynamicArrayStore dynamicLabelStore;
+    private final DynamicArrayStore dynamicLabelStore;
 
     public NodeStore(
             File fileName,
             Config config,
             IdGeneratorFactory idGeneratorFactory,
             PageCache pageCache,
-            FileSystemAbstraction fileSystemAbstraction,
             LogProvider logProvider,
-            DynamicArrayStore dynamicLabelStore,
-            StoreVersionMismatchHandler versionMismatchHandler,
-            Monitors monitors )
+            DynamicArrayStore dynamicLabelStore )
     {
-        super( fileName, config, IdType.NODE, idGeneratorFactory, pageCache, fileSystemAbstraction,
-                logProvider, versionMismatchHandler, monitors );
+        super( fileName, config, IdType.NODE, idGeneratorFactory, pageCache, logProvider );
         this.dynamicLabelStore = dynamicLabelStore;
     }
 
@@ -226,6 +220,7 @@ public class NodeStore extends AbstractRecordStore<NodeRecord>
         {
             freeId( record.getId() );
         }
+        updateDynamicLabelRecords( record.getDynamicLabelRecords() );
     }
 
     private void writeRecord( NodeRecord record, boolean force )
@@ -379,16 +374,6 @@ public class NodeStore extends AbstractRecordStore<NodeRecord>
         return dynamicLabelStore;
     }
 
-    @Override
-    protected void closeStorage()
-    {
-        if ( dynamicLabelStore != null )
-        {
-            dynamicLabelStore.close();
-            dynamicLabelStore = null;
-        }
-    }
-
     public Collection<DynamicRecord> allocateRecordsForDynamicLabels( long nodeId, long[] labels,
             Iterator<DynamicRecord> useFirst )
     {
@@ -425,26 +410,11 @@ public class NodeStore extends AbstractRecordStore<NodeRecord>
         return Pair.of(storedLongs[0], LabelIdArray.stripNodeId( storedLongs ));
     }
 
-
     public void updateDynamicLabelRecords( Iterable<DynamicRecord> dynamicLabelRecords )
     {
         for ( DynamicRecord record : dynamicLabelRecords )
         {
             dynamicLabelStore.updateRecord( record );
         }
-    }
-
-    @Override
-    public void makeStoreOk()
-    {
-        dynamicLabelStore.makeStoreOk();
-        super.makeStoreOk();
-    }
-
-    @Override
-    public void visitStore( Visitor<CommonAbstractStore, RuntimeException> visitor )
-    {
-        dynamicLabelStore.visitStore( visitor );
-        visitor.visit( this );
     }
 }

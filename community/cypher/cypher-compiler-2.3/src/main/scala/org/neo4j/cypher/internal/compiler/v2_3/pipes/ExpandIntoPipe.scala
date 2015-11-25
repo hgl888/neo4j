@@ -21,12 +21,13 @@ package org.neo4j.cypher.internal.compiler.v2_3.pipes
 
 import java.util.concurrent.ThreadLocalRandom
 
-import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{Effects, ReadsNodes, ReadsRelationships}
+import org.neo4j.cypher.internal.compiler.v2_3.ExecutionContext
+import org.neo4j.cypher.internal.compiler.v2_3.executionplan.{ReadsAllNodes, Effects, ReadsRelationships}
 import org.neo4j.cypher.internal.compiler.v2_3.planDescription.InternalPlanDescription.Arguments.ExpandExpression
 import org.neo4j.cypher.internal.compiler.v2_3.spi.QueryContext
-import org.neo4j.cypher.internal.compiler.v2_3.symbols._
-import org.neo4j.cypher.internal.compiler.v2_3.{ExecutionContext, InternalException}
-import org.neo4j.graphdb.{Direction, Node, Relationship}
+import org.neo4j.cypher.internal.frontend.v2_3.{SemanticDirection, InternalException}
+import org.neo4j.cypher.internal.frontend.v2_3.symbols._
+import org.neo4j.graphdb.{Node, Relationship}
 import org.neo4j.helpers.collection.PrefetchingIterator
 
 import scala.collection.JavaConverters._
@@ -36,12 +37,17 @@ import scala.collection.mutable.ArrayBuffer
 /**
  * Expand when both end-points are known, find all relationships of the given
  * type in the given direction between the two end-points.
+ *
+ * This is done by checking both nodes and starts from any non-dense node of the two.
+ * If both nodes are dense, we find the degree of each and expand from the smaller of the two
+ *
+ * This pipe also caches relationship information between nodes for the duration of the query
  */
 case class ExpandIntoPipe(source: Pipe,
                           fromName: String,
                           relName: String,
                           toName: String,
-                          dir: Direction,
+                          dir: SemanticDirection,
                           lazyTypes: LazyTypes)(val estimatedCardinality: Option[Double] = None)
                          (implicit pipeMonitor: PipeMonitor)
   extends PipeWithSource(source, pipeMonitor) with RonjaPipe {
@@ -93,7 +99,7 @@ case class ExpandIntoPipe(source: Pipe,
         return Iterator.empty
       }
 
-      val toDegree = getDegree(toNode, relTypes, dir.reverse, query)
+      val toDegree = getDegree(toNode, relTypes, dir.reversed, query)
       if (toDegree == 0) {
         return Iterator.empty
       }
@@ -112,7 +118,7 @@ case class ExpandIntoPipe(source: Pipe,
 
   private def relIterator(query: QueryContext, fromNode: Node,  toNode: Node, preserveDirection: Boolean,
                           relTypes: Option[Seq[Int]], relCache: RelationshipsCache) = {
-    val (start, localDirection, end) = if(preserveDirection) (fromNode, dir, toNode) else (toNode, dir.reverse(), fromNode)
+    val (start, localDirection, end) = if(preserveDirection) (fromNode, dir, toNode) else (toNode, dir.reversed, fromNode)
     val relationships = query.getRelationshipsForIds(start, localDirection, relTypes)
     new PrefetchingIterator[Relationship] {
       //we do not expect two nodes to have many connecting relationships
@@ -133,7 +139,7 @@ case class ExpandIntoPipe(source: Pipe,
     }.asScala
   }
 
-  private def getDegree(node: Node, relTypes: Option[Seq[Int]], direction: Direction, query: QueryContext) = {
+  private def getDegree(node: Node, relTypes: Option[Seq[Int]], direction: SemanticDirection, query: QueryContext) = {
     relTypes.map {
       case rels if rels.isEmpty   => query.nodeGetDegree(node.getId, direction)
       case rels if rels.size == 1 => query.nodeGetDegree(node.getId, direction, rels.head)
@@ -157,7 +163,7 @@ case class ExpandIntoPipe(source: Pipe,
 
   val symbols = source.symbols.add(toName, CTNode).add(relName, CTRelationship)
 
-  override def localEffects = Effects(ReadsNodes, ReadsRelationships)
+  override def localEffects = Effects(ReadsAllNodes, ReadsRelationships)
 
   def dup(sources: List[Pipe]): Pipe = {
     val (source :: Nil) = sources
@@ -181,7 +187,7 @@ case class ExpandIntoPipe(source: Pipe,
     @inline
     private def key(start: Node, end: Node) = {
       // if direction is BOTH than we keep the key sorted, otherwise direction is important and we keep key as is
-      if (dir != Direction.BOTH) (start.getId, end.getId)
+      if (dir != SemanticDirection.BOTH) (start.getId, end.getId)
       else {
         if (start.getId < end.getId)
           (start.getId, end.getId)

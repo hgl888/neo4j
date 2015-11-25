@@ -23,16 +23,32 @@ import java.util.concurrent.TimeUnit;
 
 public class FakeClock implements Clock
 {
-    private volatile long time = 0;
+    private volatile long time;
+
+    public FakeClock()
+    {
+        this( 0, TimeUnit.MILLISECONDS );
+    }
+
+    public FakeClock( long currentTime, TimeUnit timeUnit )
+    {
+        this.time = timeUnit.toNanos( currentTime );
+    }
 
     @Override
     public long currentTimeMillis()
     {
+        return TimeUnit.NANOSECONDS.toMillis( time );
+    }
+
+    @Override
+    public long nanoTime()
+    {
         return time;
     }
 
-    public void forward( long amount, TimeUnit timeUnit)
+    public void forward( long amount, TimeUnit timeUnit )
     {
-        time = time + timeUnit.toMillis( amount );
+        time = time + timeUnit.toNanos( amount );
     }
 }

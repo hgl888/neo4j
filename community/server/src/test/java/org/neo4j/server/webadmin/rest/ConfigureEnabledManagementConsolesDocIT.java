@@ -57,9 +57,7 @@ public class ConfigureEnabledManagementConsolesDocIT extends ExclusiveServerTest
     @Test
     public void shellConsoleShouldBeEnabledByDefault() throws Exception
     {
-        server = server()
-                .usingDatabaseDir( folder.directory( name.getMethodName() ).getAbsolutePath() )
-                .build();
+        server = server().usingDatabaseDir( folder.directory( name.getMethodName() ).getAbsolutePath() ).build();
         server.start();
 
         assertThat( exec( "ls", "shell" ).getStatus(), is( 200 ) );

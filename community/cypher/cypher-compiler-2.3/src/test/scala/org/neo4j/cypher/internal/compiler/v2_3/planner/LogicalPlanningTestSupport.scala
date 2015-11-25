@@ -22,8 +22,8 @@ package org.neo4j.cypher.internal.compiler.v2_3.planner
 import org.mockito.Matchers._
 import org.mockito.Mockito._
 import org.neo4j.cypher.internal.compiler.v2_3._
-import org.neo4j.cypher.internal.compiler.v2_3.ast._
-import org.neo4j.cypher.internal.compiler.v2_3.parser.CypherParser
+import org.neo4j.cypher.internal.compiler.v2_3.ast
+import org.neo4j.cypher.internal.compiler.v2_3.parser
 import org.neo4j.cypher.internal.compiler.v2_3.planner.execution.PipeExecutionBuilderContext
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.Metrics._
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical._
@@ -32,9 +32,11 @@ import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.plans._
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.plans.rewriter.LogicalPlanRewriter
 import org.neo4j.cypher.internal.compiler.v2_3.planner.logical.steps.LogicalPlanProducer
 import org.neo4j.cypher.internal.compiler.v2_3.spi.{GraphStatistics, PlanContext}
-import org.neo4j.cypher.internal.compiler.v2_3.test_helpers.{CypherFunSuite, CypherTestSupport}
 import org.neo4j.cypher.internal.compiler.v2_3.tracing.rewriters.RewriterStepSequencer
-import org.neo4j.graphdb.Direction
+import org.neo4j.cypher.internal.frontend.v2_3.ast._
+import org.neo4j.cypher.internal.frontend.v2_3.parser.CypherParser
+import org.neo4j.cypher.internal.frontend.v2_3.test_helpers.{CypherFunSuite, CypherTestSupport}
+import org.neo4j.cypher.internal.frontend.v2_3._
 import org.neo4j.helpers.Clock
 
 import scala.collection.mutable
@@ -53,7 +55,7 @@ trait LogicalPlanningTestSupport extends CypherTestSupport with AstConstructionT
 
   def solvedWithEstimation(cardinality: Cardinality) = CardinalityEstimation.lift(PlannerQuery.empty, cardinality)
 
-  def newPatternRelationship(start: IdName, end: IdName, rel: IdName, dir: Direction = Direction.OUTGOING, types: Seq[RelTypeName] = Seq.empty, length: PatternLength = SimplePatternLength) = {
+  def newPatternRelationship(start: IdName, end: IdName, rel: IdName, dir: SemanticDirection = SemanticDirection.OUTGOING, types: Seq[RelTypeName] = Seq.empty, length: PatternLength = SimplePatternLength) = {
     PatternRelationship(rel, (start, end), dir, types, length)
   }
 
@@ -173,11 +175,11 @@ trait LogicalPlanningTestSupport extends CypherTestSupport with AstConstructionT
   def produceLogicalPlan(queryText: String)(implicit planner: CostBasedExecutablePlanBuilder, planContext: PlanContext): LogicalPlan = {
     val parsedStatement = parser.parse(queryText)
     val mkException = new SyntaxExceptionCreator(queryText, Some(pos))
-    val semanticState = semanticChecker.check(queryText, parsedStatement, devNullLogger, mkException)
+    val semanticState = semanticChecker.check(queryText, parsedStatement, mkException)
     val (rewrittenStatement, _, postConditions) = astRewriter.rewrite(queryText, parsedStatement, semanticState)
     CostBasedExecutablePlanBuilder.rewriteStatement(rewrittenStatement, semanticState.scopeTree, SemanticTable(types = semanticState.typeTable), rewriterSequencer, semanticChecker, postConditions, monitors.newMonitor[AstRewritingMonitor]()) match {
       case (ast: Query, newTable) =>
-        val semanticState = semanticChecker.check(queryText, ast, devNullLogger, mkException)
+        val semanticState = semanticChecker.check(queryText, ast, mkException)
         tokenResolver.resolve(ast)(newTable, planContext)
         val (logicalPlan, _) = planner.produceLogicalPlan(ast, newTable)(planContext, devNullLogger)
         logicalPlan

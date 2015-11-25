@@ -20,11 +20,12 @@
 package org.neo4j.cypher
 
 import org.neo4j.cypher.internal.compiler.v2_3
-import org.neo4j.cypher.internal.compiler.v2_3.commands.expressions.StringHelper.RichString
 import org.neo4j.cypher.internal.compiler.v2_3.executionplan.InternalExecutionResult
-import org.neo4j.cypher.internal.compiler.v2_3.planDescription.InternalPlanDescription.Arguments.{DbHits, Rows}
+import org.neo4j.cypher.internal.compiler.v2_3.planDescription.InternalPlanDescription.Arguments.{DbHits, EstimatedRows, Rows}
 import org.neo4j.cypher.internal.compiler.v2_3.planDescription.{Argument, InternalPlanDescription}
+import org.neo4j.cypher.internal.compiler.v2_3.spi.GraphStatistics
 import org.neo4j.cypher.internal.compiler.v2_3.test_helpers.CreateTempFileTestSupport
+import org.neo4j.cypher.internal.frontend.v2_3.helpers.StringHelper.RichString
 import org.neo4j.cypher.internal.helpers.TxCounts
 
 class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFileTestSupport with NewPlannerTestSupport {
@@ -124,7 +125,7 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
   test("tracks number of rows") {
     //GIVEN
     // due to the cost model, we need a bunch of nodes for the planner to pick a plan that does lookup by id
-    (1 to 10).foreach(_ => createNode())
+    (1 to 100).foreach(_ => createNode())
 
     val result = profileWithAllPlanners("match (n) where id(n) = 0 RETURN n")
 
@@ -135,7 +136,7 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
   test("tracks number of graph accesses") {
     //GIVEN
     // due to the cost model, we need a bunch of nodes for the planner to pick a plan that does lookup by id
-    (1 to 10).foreach(_ => createNode("foo" -> "bar"))
+    (1 to 100).foreach(_ => createNode("foo" -> "bar"))
 
     val result = profileWithAllPlanners("match (n) where id(n) = 0 RETURN n.foo")
 
@@ -208,6 +209,24 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
     assertDbHits(2)(result)("AllNodesScan")
 
     result.executionPlanDescription()
+  }
+
+  test("LIMIT should influence cardinality estimation even when parameterized") {
+    (0 until 100).map(i => createLabeledNode("Person"))
+    val result = executeWithAllPlanners(s"PROFILE MATCH (p:Person) RETURN p LIMIT {limit}", "limit" -> 10)
+    assertEstimatedRows(GraphStatistics.DEFAULT_LIMIT_CARDINALITY.amount.toInt)(result)("Limit")
+  }
+
+  test("LIMIT should influence cardinality estimation with literal") {
+    (0 until 100).map(i => createLabeledNode("Person"))
+    val result = executeWithAllPlanners(s"PROFILE MATCH (p:Person) RETURN p LIMIT 10")
+    assertEstimatedRows(10)(result)("Limit")
+  }
+
+  test("LIMIT should influence cardinality estimation with literal and parameters") {
+    (0 until 100).map(i => createLabeledNode("Person"))
+    val result = executeWithAllPlanners(s"PROFILE MATCH (p:Person) WHERE 50 = {fifty} RETURN p LIMIT 10", "fifty" -> 50)
+    assertEstimatedRows(10)(result)("Limit")
   }
 
   test ("should support profiling union queries") {
@@ -482,9 +501,55 @@ class ProfilerAcceptanceTest extends ExecutionEngineFunSuite with CreateTempFile
     assertDbHits(4)(result)("Filter")
   }
 
+  test("joins with identical scans") {
+    //given
+    val corp = createLabeledNode("Company")
+    val a1 = createLabeledNode("Artist")
+    val a2 = createLabeledNode("Artist")
+    val c = createLabeledNode("Concert")
+    val v = createLabeledNode("Venue")
+    relate(corp, a1, "SIGNED_WITH")
+    relate(corp, a2, "SIGNED_WITH")
+    relate(a1, c, "PERFORMED_AT")
+    relate(a2, c, "PERFORMED_AT")
+    relate(c, v, "IN")
+
+    //force a plan to have a scan on corp in both the lhs and the rhs of join
+    val query =
+      """MATCH (corp:Company)<-[:SIGNED_WITH]-(a1:Artist)-[:PERFORMED_AT]->(c:Concert)-[:IN]->(v:Venue)
+        |MATCH (corp)<-[:SIGNED_WITH]-(a2:Artist)-[:PERFORMED_AT]->(c)
+        |USING JOIN ON c,corp
+        |RETURN a1, a2, v""".stripMargin
+
+    //when
+    val result = profileWithAllPlannersAndRuntimes(query)
+
+    //then
+    assertDbHits(2)(result)("NodeByLabelScan")
+    assertRows(1)(result)("NodeByLabelScan")
+  }
+
+  test("distinct should not look up properties every time") {
+    // GIVEN
+    createNode("prop"-> 42)
+    createNode("prop"-> 42)
+
+    // WHEN
+    val result = profileWithAllPlanners("MATCH (n) RETURN DISTINCT n.prop")
+
+    // THEN
+    assertDbHits(2)(result)("Distinct")
+  }
+
   private def assertRows(expectedRows: Int)(result: InternalExecutionResult)(names: String*) {
     getPlanDescriptions(result, names).foreach {
       plan => assert(expectedRows === getArgument[Rows](plan).value, s" wrong row count for plan: ${plan.name}")
+    }
+  }
+
+  private def assertEstimatedRows(expectedRows: Int)(result: InternalExecutionResult)(names: String*) {
+    getPlanDescriptions(result, names).foreach {
+      plan => assert(expectedRows === getArgument[EstimatedRows](plan).value, s" wrong estiamted row count for plan: ${plan.name}")
     }
   }
 

@@ -45,7 +45,7 @@ svg
   width: 100%
   overflow: hidden
 
-[play-topic], [help-topic], [server-topic], a[target]
+[play-topic], [help-topic], [server-topic], a[target], .warn
   &:before
     font-family: FontAwesome
     padding-right: 4px
@@ -58,13 +58,9 @@ svg
   &:before
     content: "\f144"
 
-[help-topic]
+[help-topic], .warn
   &:before
     content: "\f05a"
-
-a[target]:not(.no-out-symbol)
-  &:before
-    content: "\f14c"
 
 table.data
   width: 100%
@@ -157,6 +153,8 @@ table.json-object
     color: color-error
     > .status
       line-height middlebar-height - inspector-footer-row-margin
+    &.client-warning
+      color: color-warning-on-white
   i[class*="fa-"]
     margin: 0
   .fa-ok

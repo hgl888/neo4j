@@ -27,6 +27,9 @@ import java.util.Arrays;
  */
 public final class Strings
 {
+
+    public static final String TAB = "\t";
+
     private Strings()
     {
     }
@@ -145,6 +148,22 @@ public final class Strings
         return builder.toString();
     }
 
+    /**
+     * Joining independent lines from provided elements into one line with {@link java.lang.System#lineSeparator} after
+     * each element
+     * @param elements - lines to join
+     * @return joined line
+     */
+    public static String joinAsLines( String... elements )
+    {
+        StringBuilder result = new StringBuilder();
+        for ( String line : elements )
+        {
+            result.append( line ).append( System.lineSeparator() );
+        }
+        return result.toString();
+    }
+
     public static void escape( Appendable output, String arg ) throws IOException
     {
         int len = arg.length();
@@ -195,9 +214,9 @@ public final class Strings
      * Use this to standardize the width of some text output to all be left-justified and space-padded
      * on the right side to fill up the given column width.
      *
-     * @param str
-     * @param columnWidth
-     * @return
+     * @param str the text to format
+     * @param columnWidth the column width
+     * @return the left-justified space-padded text
      */
     public static String ljust( String str, int columnWidth )
     {
@@ -208,9 +227,9 @@ public final class Strings
      * Use this to standardize the width of some text output to all be right-justified and space-padded
      * on the left side to fill up the given column width.
      *
-     * @param str
-     * @param columnWidth
-     * @return
+     * @param str the text to format
+     * @param columnWidth the column width
+     * @return the right-justified space-padded text
      */
     public static String rjust( String str, int columnWidth )
     {

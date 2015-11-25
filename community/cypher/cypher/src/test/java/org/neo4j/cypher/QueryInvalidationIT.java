@@ -28,7 +28,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.neo4j.cypher.internal.compiler.v2_3.CypherCacheHitMonitor;
-import org.neo4j.cypher.internal.compiler.v2_3.ast.Query;
+import org.neo4j.cypher.internal.frontend.v2_3.ast.Query;
 import org.neo4j.graphdb.DynamicLabel;
 import org.neo4j.graphdb.Result;
 import org.neo4j.graphdb.Transaction;
@@ -94,7 +94,7 @@ public class QueryInvalidationIT
         long replanTime = System.currentTimeMillis() + 1_800;
 
         //create more date
-        createData( USERS, USERS, CONNECTIONS );
+        createData( USERS, USERS, 2 * CONNECTIONS );
 
         // - after the query TTL has expired -
         while ( System.currentTimeMillis() < replanTime )

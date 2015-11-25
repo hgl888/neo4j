@@ -20,17 +20,14 @@
 package upgrade;
 
 import java.io.File;
-import java.io.FilenameFilter;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.regex.Pattern;
 
 import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.io.fs.FileUtils;
+import org.neo4j.kernel.impl.ha.ClusterManager;
 import org.neo4j.kernel.lifecycle.LifeSupport;
-import org.neo4j.test.ha.ClusterManager;
 
-import static org.neo4j.test.ha.ClusterManager.clusterOfSize;
+import static org.neo4j.kernel.impl.ha.ClusterManager.clusterOfSize;
 
 public class StoreMigratorTestUtil
 {
@@ -66,20 +63,5 @@ public class StoreMigratorTestUtil
         life.start();
 
         return clusterManager.getDefaultCluster();
-    }
-
-    public static File[] findAllMatchingFiles( File baseDir, String regex )
-    {
-        final Pattern pattern = Pattern.compile( regex );
-        File[] files = baseDir.listFiles( new FilenameFilter()
-        {
-            @Override
-            public boolean accept( File dir, String name )
-            {
-                return pattern.matcher( name ).matches();
-            }
-        } );
-        Arrays.sort( files );
-        return files;
     }
 }
