@@ -33,6 +33,7 @@ import org.neo4j.cypher.internal.compiler.v2_3.{CypherCompilerFactory, DPPlanner
 import org.neo4j.cypher.internal.frontend.v2_3.notification.{InternalNotification, LegacyPlannerNotification, PlannerUnsupportedNotification, RuntimeUnsupportedNotification, _}
 import org.neo4j.cypher.internal.frontend.v2_3.spi.MapToPublicExceptions
 import org.neo4j.cypher.internal.frontend.v2_3.{CypherException => InternalCypherException}
+import org.neo4j.cypher.internal.spi.v2_3.TransactionBoundQueryContext.IndexSearchMonitor
 import org.neo4j.cypher.internal.spi.v2_3.{GeneratedQueryStructure, TransactionBoundGraphStatistics, TransactionBoundPlanContext, TransactionBoundQueryContext}
 import org.neo4j.cypher.javacompat.ProfilerStatistics
 import org.neo4j.graphdb.Result.ResultVisitor
@@ -156,7 +157,12 @@ trait CompatibilityFor2_3 {
   implicit val executionMonitor = kernelMonitors.newMonitor(classOf[QueryExecutionMonitor])
 
   def produceParsedQuery(preParsedQuery: PreParsedQuery, tracer: CompilationPhaseTracer) = {
-    val preparedQueryForV_2_3 = Try(compiler.prepareQuery(preParsedQuery.statement, preParsedQuery.rawStatement, preParsedQuery.notificationLogger, Some(preParsedQuery.offset), tracer))
+    val preparedQueryForV_2_3 =
+      Try(compiler.prepareQuery(preParsedQuery.statement,
+                                preParsedQuery.rawStatement,
+                                preParsedQuery.notificationLogger,
+                                preParsedQuery.planner.name,
+                                Some(preParsedQuery.offset), tracer))
     new ParsedQuery {
       def isPeriodicCommit = preparedQueryForV_2_3.map(_.isPeriodicCommit).getOrElse(false)
 
@@ -177,7 +183,8 @@ trait CompatibilityFor2_3 {
   class ExecutionPlanWrapper(inner: ExecutionPlan_v2_3) extends ExecutionPlan {
 
     private def queryContext(graph: GraphDatabaseAPI, txInfo: TransactionInfo) = {
-      val ctx = new TransactionBoundQueryContext(graph, txInfo.tx, txInfo.isTopLevelTx, txInfo.statement)
+      val searchMonitor: IndexSearchMonitor = kernelMonitors.newMonitor(classOf[IndexSearchMonitor])
+      val ctx = new TransactionBoundQueryContext(graph, txInfo.tx, txInfo.isTopLevelTx, txInfo.statement)(searchMonitor)
       new ExceptionTranslatingQueryContextFor2_3(ctx)
     }
 
