@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -27,22 +27,22 @@ import org.junit.runners.model.Statement;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 
 import org.neo4j.function.IntFunction;
 import org.neo4j.function.Predicate;
+import org.neo4j.graphdb.GraphDatabaseService;
 import org.neo4j.graphdb.config.Setting;
 import org.neo4j.graphdb.factory.HighlyAvailableGraphDatabaseFactory;
+import org.neo4j.io.fs.FileUtils;
 import org.neo4j.kernel.impl.ha.ClusterManager;
+import org.neo4j.kernel.impl.ha.ClusterManager.Builder;
 import org.neo4j.kernel.impl.ha.ClusterManager.ClusterBuilder;
 import org.neo4j.kernel.impl.ha.ClusterManager.ManagedCluster;
 import org.neo4j.kernel.impl.ha.ClusterManager.Provider;
 import org.neo4j.kernel.impl.ha.ClusterManager.StoreDirInitializer;
+import org.neo4j.kernel.impl.util.Listener;
 import org.neo4j.test.TargetDirectory;
-
-import static java.util.Arrays.asList;
 
 import static org.neo4j.cluster.ClusterSettings.default_timeout;
 import static org.neo4j.graphdb.factory.GraphDatabaseSettings.pagecache_memory;
@@ -56,10 +56,26 @@ import static org.neo4j.kernel.impl.ha.ClusterManager.allSeesAllAsAvailable;
  */
 public class ClusterRule extends ExternalResource implements ClusterBuilder<ClusterRule>
 {
+    private static final StoreDirInitializer defaultStoreDirInitializer =
+            new ClusterManager.StoreDirInitializer()
+            {
+                @Override
+                public void initializeStoreDir( int serverId, File storeDir ) throws IOException
+                {
+                    File[] files = storeDir.listFiles();
+                    if ( files != null )
+                    {
+                        for ( File file : files )
+                        {
+                            FileUtils.deleteRecursively( file );
+                        }
+                    }
+                }
+            };
+
     private ClusterManager.Builder clusterManagerBuilder;
     private ClusterManager clusterManager;
     private File storeDirectory;
-    private List<Predicate<ManagedCluster>> availabilityChecks = asList( allSeesAllAsAvailable() );
     private final TargetDirectory.TestDirectory testDirectory;
     private ManagedCluster cluster;
 
@@ -70,7 +86,9 @@ public class ClusterRule extends ExternalResource implements ClusterBuilder<Clus
                 .withSharedSetting( store_internal_log_level, "DEBUG" )
                 .withSharedSetting( default_timeout, "1s" )
                 .withSharedSetting( tx_push_factor, "0" )
-                .withSharedSetting( pagecache_memory, "8m" );
+                .withSharedSetting( pagecache_memory, "8m" )
+                .withAvailabilityChecks( allSeesAllAsAvailable() )
+                .withStoreDirInitializer( defaultStoreDirInitializer );
     }
 
     @Override
@@ -82,71 +100,67 @@ public class ClusterRule extends ExternalResource implements ClusterBuilder<Clus
     @Override
     public ClusterRule withSeedDir( final File seedDir )
     {
-        clusterManagerBuilder = clusterManagerBuilder.withSeedDir( seedDir );
-        return this;
+        return set( clusterManagerBuilder.withSeedDir( seedDir ) );
     }
 
     @Override
     public ClusterRule withStoreDirInitializer( StoreDirInitializer initializer )
     {
-        clusterManagerBuilder = clusterManagerBuilder.withStoreDirInitializer( initializer );
-        return this;
+        return set( clusterManagerBuilder.withStoreDirInitializer( initializer ) );
     }
 
     @Override
     public ClusterRule withDbFactory( HighlyAvailableGraphDatabaseFactory dbFactory )
     {
-        clusterManagerBuilder = clusterManagerBuilder.withDbFactory( dbFactory );
-        return this;
+        return set( clusterManagerBuilder.withDbFactory( dbFactory ) );
     }
 
     @Override
     public ClusterRule withProvider( Provider provider )
     {
-        clusterManagerBuilder = clusterManagerBuilder.withProvider( provider );
-        return this;
+        return set( clusterManagerBuilder.withProvider( provider ) );
     }
 
     @Override
     public ClusterRule withInstanceConfig( Map<String,IntFunction<String>> commonConfig )
     {
-        clusterManagerBuilder = clusterManagerBuilder.withInstanceConfig( commonConfig );
-        return this;
+        return set( clusterManagerBuilder.withInstanceConfig( commonConfig ) );
     }
 
     @Override
     public ClusterRule withInstanceSetting( Setting<?> setting, IntFunction<String> valueFunction )
     {
-        clusterManagerBuilder = clusterManagerBuilder.withInstanceSetting( setting, valueFunction );
-        return this;
+        return set( clusterManagerBuilder.withInstanceSetting( setting, valueFunction ) );
     }
 
     @Override
     public ClusterRule withSharedConfig( Map<String,String> commonConfig )
     {
-        clusterManagerBuilder = clusterManagerBuilder.withSharedConfig( commonConfig );
-        return this;
+        return set( clusterManagerBuilder.withSharedConfig( commonConfig ) );
     }
 
     @Override
     public ClusterRule withSharedSetting( Setting<?> setting, String value )
     {
-        clusterManagerBuilder = clusterManagerBuilder.withSharedSetting( setting, value );
-        return this;
+        return set( clusterManagerBuilder.withSharedSetting( setting, value ) );
     }
 
-    /**
-     * Specifies which availability checks are performed and awaited before considering the cluster
-     * up and running.
-     *
-     * @param checks availability checks to perform. There are default checks if no custom checks
-     * are provided. All previous checks will be replaced by these new ones.
-     * @return this {@link ClusterRule} instance, for builder convenience.
-     */
-    @SafeVarargs
-    public final ClusterRule availabilityChecks( Predicate<ManagedCluster>... checks )
+    @Override
+    public ClusterRule withInitialDataset( Listener<GraphDatabaseService> transactor )
     {
-        availabilityChecks = Arrays.asList( checks );
+        return set( clusterManagerBuilder.withInitialDataset( transactor ) );
+    }
+
+    @SafeVarargs
+    @Override
+    public final ClusterRule withAvailabilityChecks( Predicate<ManagedCluster>... checks )
+    {
+        return set( clusterManagerBuilder.withAvailabilityChecks( checks ) );
+    }
+
+    private ClusterRule set( Builder builder )
+    {
+        clusterManagerBuilder = builder;
         return this;
     }
 
@@ -169,13 +183,7 @@ public class ClusterRule extends ExternalResource implements ClusterBuilder<Clus
         {
             throw new RuntimeException( throwable );
         }
-        ClusterManager.ManagedCluster cluster = clusterManager.getDefaultCluster();
-        for ( Predicate<ManagedCluster> availabilityCheck : availabilityChecks )
-        {
-            cluster.await( availabilityCheck );
-        }
-
-        return this.cluster = cluster;
+        return this.cluster = clusterManager.getDefaultCluster();
     }
 
     @Override
@@ -203,16 +211,9 @@ public class ClusterRule extends ExternalResource implements ClusterBuilder<Clus
     @Override
     protected void after()
     {
-        try
+        if ( clusterManager != null )
         {
-            if ( clusterManager != null )
-            {
-                clusterManager.shutdown();
-            }
-        }
-        catch ( Throwable throwable )
-        {
-            throwable.printStackTrace();
+            clusterManager.safeShutdown();
         }
     }
 

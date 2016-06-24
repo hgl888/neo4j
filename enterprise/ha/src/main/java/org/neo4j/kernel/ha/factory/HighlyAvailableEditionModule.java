@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -385,7 +385,6 @@ public class HighlyAvailableEditionModule
             }
         };
 
-
         SwitchToSlave switchToSlaveInstance = new SwitchToSlave( platformModule.storeDir, logging,
                 platformModule.fileSystem, config, dependencies, (HaIdGeneratorFactory) idGeneratorFactory,
                 masterDelegateInvocationHandler, clusterMemberAvailability, requestContextFactory, pullerFactory,
@@ -586,9 +585,9 @@ public class HighlyAvailableEditionModule
         DefaultSlaveFactory slaveFactory = dependencies.satisfyDependency(
                 new DefaultSlaveFactory( logging.getInternalLogProvider(), monitors,
                         config.get( HaSettings.com_chunk_size ).intValue() ) );
-
+        HostnamePort me = config.get( ClusterSettings.cluster_server );
         Slaves slaves = dependencies.satisfyDependency(
-                paxosLife.add( new HighAvailabilitySlaves( members, clusterClient, slaveFactory ) ) );
+                paxosLife.add( new HighAvailabilitySlaves( members, clusterClient, slaveFactory, me ) ) );
 
         return paxosLife.add( new TransactionPropagator( TransactionPropagator.from( config ),
                 logging.getInternalLog( TransactionPropagator.class ), slaves, new CommitPusher( jobScheduler ) ) );
@@ -632,7 +631,7 @@ public class HighlyAvailableEditionModule
             {
                 return CommunityEditionModule.createLockManager( config, logging );
             }
-        } ) );
+        }, config ) );
         return lockManager;
     }
 

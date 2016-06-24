@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -23,11 +23,14 @@ import java.util.Collection;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import org.neo4j.collection.pool.Pool;
 import org.neo4j.collection.primitive.PrimitiveIntCollections;
 import org.neo4j.collection.primitive.PrimitiveIntIterator;
 import org.neo4j.cursor.Cursor;
+import org.neo4j.graphdb.TransactionTerminatedException;
 import org.neo4j.helpers.Clock;
 import org.neo4j.helpers.ThisShouldNotHappenError;
 import org.neo4j.kernel.api.KernelTransaction;
@@ -77,6 +80,7 @@ import org.neo4j.kernel.impl.transaction.TransactionHeaderInformationFactory;
 import org.neo4j.kernel.impl.transaction.TransactionMonitor;
 import org.neo4j.kernel.impl.transaction.command.Command;
 import org.neo4j.kernel.impl.transaction.log.PhysicalTransactionRepresentation;
+import org.neo4j.kernel.impl.transaction.state.NeoStoreTransactionContext;
 import org.neo4j.kernel.impl.transaction.state.TransactionRecordState;
 import org.neo4j.kernel.impl.transaction.tracing.CommitEvent;
 import org.neo4j.kernel.impl.transaction.tracing.TransactionEvent;
@@ -157,6 +161,8 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
     private final Clock clock;
     private final TransactionToRecordStateVisitor txStateToRecordStateVisitor = new TransactionToRecordStateVisitor();
     private final Collection<Command> extractedCommands = new ArrayCollection<>( 32 );
+    private final Locks locksManager;
+    private final boolean txTerminationAwareLocks;
     private TransactionState txState;
     private LegacyIndexTransactionState legacyIndexTransactionState;
     private TransactionType transactionType = TransactionType.ANY;
@@ -178,6 +184,17 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
     private final TransactionTracer tracer;
     private TransactionEvent transactionEvent;
     private CloseListener closeListener;
+    private final NeoStoreTransactionContext context;
+    private volatile int reuseCount;
+
+    /**
+     * Lock prevents transaction {@link #markForTermination() transction termination} from interfering with {@link
+     * #close() transaction commit} and specifically with {@link #release()}.
+     * Termination can run concurrently with commit and we need to make sure that it terminates the right lock client
+     * and the right transaction (with the right {@link #reuseCount}) because {@link KernelTransactionImplementation}
+     * instances are pooled.
+     */
+    private final Lock terminationReleaseLock = new ReentrantLock();
 
     public KernelTransactionImplementation( StatementOperationParts operations,
                                             SchemaWriteGuard schemaWriteGuard,
@@ -187,7 +204,7 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
                                             TransactionRecordState recordState,
                                             SchemaIndexProviderMap providerMap,
                                             NeoStores neoStores,
-                                            Locks.Client locks,
+                                            Locks locks,
                                             TransactionHooks hooks,
                                             ConstraintIndexCreator constraintIndexCreator,
                                             TransactionHeaderInformationFactory headerInformationFactory,
@@ -199,7 +216,9 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
                                             ConstraintSemantics constraintSemantics,
                                             Clock clock,
                                             TransactionTracer tracer,
-                                            ProcedureCache procedureCache )
+                                            ProcedureCache procedureCache,
+                                            NeoStoreTransactionContext context,
+                                            boolean txTerminationAwareLocks )
     {
         this.operations = operations;
         this.schemaWriteGuard = schemaWriteGuard;
@@ -208,14 +227,16 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
         this.recordState = recordState;
         this.providerMap = providerMap;
         this.schemaState = schemaState;
+        this.locksManager = locks;
+        this.txTerminationAwareLocks = txTerminationAwareLocks;
         this.hooks = hooks;
-        this.locks = locks;
         this.constraintIndexCreator = constraintIndexCreator;
         this.headerInformationFactory = headerInformationFactory;
         this.commitProcess = commitProcess;
         this.transactionMonitor = transactionMonitor;
         this.storeLayer = storeLayer;
         this.procedureCache = procedureCache;
+        this.context = context;
         this.legacyIndexTransactionState = new CachingLegacyIndexTransactionState( legacyIndexTransactionState );
         this.pool = pool;
         this.constraintSemantics = constraintSemantics;
@@ -229,8 +250,8 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
      */
     public KernelTransactionImplementation initialize( long lastCommittedTx )
     {
-        assert locks != null : "This transaction has been disposed off, it should not be used.";
-        this.closing = closed = failure = success = false;
+        this.locks = locksManager.newClient();
+        this.closing = closed = failure = success = terminated = false;
         this.transactionType = TransactionType.ANY;
         this.beforeHookInvoked = false;
         this.recordState.initialize( lastCommittedTx );
@@ -241,6 +262,11 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
         this.storeStatement = storeLayer.acquireStatement();
         this.closeListener = null;
         return this;
+    }
+
+    int getReuseCount()
+    {
+        return reuseCount;
     }
 
     @Override
@@ -261,14 +287,42 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
         return terminated;
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * This method is guarded by {@link #terminationReleaseLock} to coordinate concurrent
+     * {@link #close()} and {@link #release()} calls.
+     */
     @Override
     public void markForTermination()
     {
-        if ( !terminated )
+        if ( !canBeTerminated() )
         {
-            failure = true;
-            terminated = true;
-            transactionMonitor.transactionTerminated();
+            return;
+        }
+
+        int initialReuseCount = reuseCount;
+        terminationReleaseLock.lock();
+        try
+        {
+            // this instance could have been reused, make sure we are trying to terminate the right transaction
+            // without this check there exists a possibility to terminate lock client that has just been returned to
+            // the pool or a transaction that was reused and represents a completely different logical transaction
+            boolean stillSameTransaction = initialReuseCount == reuseCount;
+            if ( stillSameTransaction && canBeTerminated() )
+            {
+                failure = true;
+                terminated = true;
+                if ( txTerminationAwareLocks && locks != null )
+                {
+                    locks.stop();
+                }
+                transactionMonitor.transactionTerminated();
+            }
+        }
+        finally
+        {
+            terminationReleaseLock.unlock();
         }
     }
 
@@ -420,6 +474,7 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
         return hasTxStateWithChanges() && txState.hasDataChanges();
     }
 
+    // Only for test-access
     public TransactionRecordState getTransactionRecordState()
     {
         return recordState;
@@ -437,15 +492,7 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
             if ( failure || !success )
             {
                 rollback();
-                if ( success )
-                {
-                    // Success was called, but also failure which means that the client code using this
-                    // transaction passed through a happy path, but the transaction was still marked as
-                    // failed for one or more reasons. Tell the user that although it looked happy it
-                    // wasn't committed, but was instead rolled back.
-                    throw new TransactionFailureException( Status.Transaction.MarkedAsFailed,
-                            "Transaction rolled back even if marked as successful" );
-                }
+                failOnNonExplicitRollbackIfNeeded();
             }
             else
             {
@@ -478,6 +525,37 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
         }
     }
 
+    /**
+     * Throws exception if this transaction was marked as successful but failure flag has also been set to true.
+     * <p>
+     * This could happen when:
+     * <ul>
+     * <li>caller explicitly calls both {@link #success()} and {@link #failure()}</li>
+     * <li>caller explicitly calls {@link #success()} but transaction execution fails</li>
+     * <li>caller explicitly calls {@link #success()} but transaction is terminated</li>
+     * </ul>
+     * <p>
+     *
+     * @throws TransactionFailureException when execution failed
+     * @throws TransactionTerminatedException when transaction was terminated
+     */
+    private void failOnNonExplicitRollbackIfNeeded() throws TransactionFailureException
+    {
+        if ( success && terminated )
+        {
+            throw new TransactionTerminatedException();
+        }
+        if ( success )
+        {
+            // Success was called, but also failure which means that the client code using this
+            // transaction passed through a happy path, but the transaction was still marked as
+            // failed for one or more reasons. Tell the user that although it looked happy it
+            // wasn't committed, but was instead rolled back.
+            throw new TransactionFailureException( Status.Transaction.MarkedAsFailed,
+                    "Transaction rolled back even if marked as successful" );
+        }
+    }
+
     protected void dispose()
     {
         if ( locks != null )
@@ -505,23 +583,27 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
         try ( CommitEvent commitEvent = transactionEvent.beginCommitEvent() )
         {
             // Trigger transaction "before" hooks.
-            if ( hasDataChanges() )
+            if ( hasTxStateWithChanges() )
             {
-                try
+                if ( txState.hasDataChanges() )
                 {
-                    if ( (hooksState = hooks.beforeCommit( txState, this, storeLayer )) != null && hooksState.failed() )
+                    try
                     {
-                        throw new TransactionFailureException( Status.Transaction.HookFailed, hooksState.failure(),
-                                "" );
+                        if ( (hooksState = hooks.beforeCommit( txState, this, storeLayer )) != null && hooksState.failed() )
+                        {
+                            throw new TransactionFailureException( Status.Transaction.HookFailed, hooksState.failure(),
+                                    "" );
+                        }
+                    }
+                    finally
+                    {
+                        beforeHookInvoked = true;
                     }
                 }
-                finally
-                {
-                    beforeHookInvoked = true;
-                }
-            }
 
-            prepareRecordChangesFromTransactionState();
+                context.init( locks );
+                prepareRecordChangesFromTransactionState();
+            }
 
             // Convert changes into commands and commit
             if ( hasChanges() )
@@ -661,19 +743,17 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
 
     /**
      * Release resources held up by this transaction & return it to the transaction pool.
+     * This method is guarded by {@link #terminationReleaseLock} to coordinate concurrent
+     * {@link #markForTermination()} calls.
      */
     private void release()
     {
-        locks.releaseAll();
-        if ( terminated )
+        terminationReleaseLock.lock();
+        try
         {
-            // This transaction has been externally marked for termination.
-            // Just dispose of this transaction and don't return it to the pool.
-            dispose();
-        }
-        else
-        {
-            // Return this instance to the pool so that another transaction may use it.
+            locks.close();
+            locks = null;
+            terminated = false;
             pool.release( this );
             if ( storeStatement != null )
             {
@@ -681,6 +761,20 @@ public class KernelTransactionImplementation implements KernelTransaction, TxSta
                 storeStatement = null;
             }
         }
+        finally
+        {
+            reuseCount++;
+            terminationReleaseLock.unlock();
+        }
+    }
+
+    /**
+     * Transaction can be terminated only when it is not closed and not already terminated.
+     * Otherwise termination does not make sense.
+     */
+    private boolean canBeTerminated()
+    {
+        return !closed && !terminated;
     }
 
     private class TransactionToRecordStateVisitor extends TxStateVisitor.Adapter

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -28,6 +28,7 @@ import org.neo4j.graphdb.factory.GraphDatabaseSettings;
 import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.io.pagecache.PageCache;
 import org.neo4j.kernel.DefaultIdGeneratorFactory;
+import org.neo4j.kernel.IdGeneratorFactory;
 import org.neo4j.kernel.KernelHealth;
 import org.neo4j.kernel.NeoStoreDataSource;
 import org.neo4j.kernel.TransactionEventHandlers;
@@ -55,6 +56,7 @@ import org.neo4j.kernel.impl.transaction.log.PhysicalLogFile;
 import org.neo4j.kernel.impl.util.JobScheduler;
 import org.neo4j.kernel.monitoring.Monitors;
 import org.neo4j.kernel.monitoring.tracing.Tracers;
+import org.neo4j.logging.LogProvider;
 import org.neo4j.logging.NullLog;
 import org.neo4j.logging.NullLogProvider;
 
@@ -68,23 +70,29 @@ public class NeoStoreDataSourceRule extends ExternalResource
     private NeoStoreDataSource dataSource;
 
     public NeoStoreDataSource getDataSource( File storeDir, FileSystemAbstraction fs,
-                                             PageCache pageCache, Map<String, String> additionalConfig, KernelHealth kernelHealth )
+            PageCache pageCache, Map<String,String> additionalConfig, KernelHealth kernelHealth )
+    {
+        Config config = new Config( stringMap( additionalConfig ), GraphDatabaseSettings.class );
+        IdGeneratorFactory idGeneratorFactory = new DefaultIdGeneratorFactory( fs );
+        LogProvider log = NullLogProvider.getInstance();
+        StoreFactory storeFactory = new StoreFactory( storeDir, config, idGeneratorFactory, pageCache, fs, log );
+        return getDataSource( storeDir, fs, config, storeFactory, idGeneratorFactory, kernelHealth, log );
+    }
+
+    public NeoStoreDataSource getDataSource( File storeDir, FileSystemAbstraction fs, Config config,
+            StoreFactory storeFactory, IdGeneratorFactory idGeneratorFactory, KernelHealth kernelHealth,
+            LogProvider logProvider )
     {
         if ( dataSource != null )
         {
             dataSource.stop();
             dataSource.shutdown();
         }
-        final Config config = new Config( stringMap( additionalConfig ),
-                GraphDatabaseSettings.class );
-
-        StoreFactory sf = new StoreFactory( storeDir, config, new DefaultIdGeneratorFactory( fs ), pageCache, fs,
-                NullLogProvider.getInstance() );
 
         Locks locks = mock( Locks.class );
         when( locks.newClient() ).thenReturn( mock( Locks.Client.class ) );
 
-        dataSource = new NeoStoreDataSource( storeDir, config, sf, NullLogProvider.getInstance(),
+        dataSource = new NeoStoreDataSource( storeDir, config, storeFactory, logProvider,
                 mock( JobScheduler.class, RETURNS_MOCKS ), mock( TokenNameLookup.class ),
                 dependencyResolverForNoIndexProvider(), mock( PropertyKeyTokenHolder.class ),
                 mock( LabelTokenHolder.class ), mock( RelationshipTypeTokenHolder.class ), locks,
@@ -93,7 +101,8 @@ public class NeoStoreDataSourceRule extends ExternalResource
                 mock( PhysicalLogFile.Monitor.class ), TransactionHeaderInformationFactory.DEFAULT,
                 new StartupStatisticsProvider(), mock( NodeManager.class ), null, null,
                 new CommunityCommitProcessFactory(), mock( PageCache.class ),
-                mock( ConstraintSemantics.class), new Monitors(), new Tracers( "null", NullLog.getInstance() ) );
+                mock( ConstraintSemantics.class), new Monitors(), new Tracers( "null", NullLog.getInstance() ),
+                idGeneratorFactory );
 
         return dataSource;
     }

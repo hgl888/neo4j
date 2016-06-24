@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -83,7 +83,9 @@ class ClusterInstance
     private boolean online = true;
 
     public static ClusterInstance newClusterInstance( InstanceId id, URI uri, Monitors monitors,
-                                                      ClusterConfiguration configuration, LogProvider logging )
+                                                      ClusterConfiguration configuration,
+                                                      int maxSurvivableFailedMembers,
+                                                      LogProvider logging )
     {
         MultiPaxosServerFactory factory = new MultiPaxosServerFactory( configuration,
                 logging, monitors.newMonitor( StateMachines.Monitor.class ) );
@@ -99,6 +101,7 @@ class ClusterInstance
 
         DelayedDirectExecutor executor = new DelayedDirectExecutor( logging );
         final MultiPaxosContext context = new MultiPaxosContext( id,
+                maxSurvivableFailedMembers,
                 Iterables.<ElectionRole, ElectionRole>iterable( new ElectionRole( ClusterConfiguration.COORDINATOR ) ),
                 new ClusterConfiguration( configuration.getName(), logging,
                         configuration.getMemberURIs() ),

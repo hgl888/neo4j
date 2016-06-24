@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -183,7 +183,7 @@ public class StoreCopyClient
     public void copyStore( StoreCopyRequester requester, CancellationRequest cancellationRequest )
             throws IOException
     {
-        // Clear up the current temp directory if there
+        // Create a temp directory (or clean if present)
         File tempStore = new File( storeDir, TEMP_COPY_DIRECTORY_NAME );
         cleanDirectory( tempStore );
 
@@ -216,6 +216,9 @@ public class StoreCopyClient
         {
             FileUtils.moveFileToDirectory( candidate, storeDir );
         }
+
+        // All done, delete temp directory
+        FileUtils.deleteRecursively( tempStore );
     }
 
     private void writeTransactionsToActiveLogFile( File tempStoreDir, Response<?> response ) throws IOException

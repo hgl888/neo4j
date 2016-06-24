@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,6 +19,8 @@
  */
 package org.neo4j.graphdb;
 
+import static java.util.Objects.requireNonNull;
+
 /**
  * Signals that the transaction within which the failed operations ran
  * has been terminated with {@link Transaction#terminate()}.
@@ -27,6 +29,11 @@ public class TransactionTerminatedException extends TransactionFailureException
 {
     public TransactionTerminatedException()
     {
-        super( "The transaction has been terminated." );
+        this( "" );
+    }
+
+    protected TransactionTerminatedException( String info )
+    {
+        super( "The transaction has been terminated. " + requireNonNull( info ) );
     }
 }

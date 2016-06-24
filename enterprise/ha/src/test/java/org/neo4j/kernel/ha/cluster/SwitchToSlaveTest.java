@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,16 +19,16 @@
  */
 package org.neo4j.kernel.ha.cluster;
 
-import org.junit.Test;
-import org.mockito.invocation.InvocationOnMock;
-import org.mockito.stubbing.Answer;
-
 import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.concurrent.TimeUnit;
+
+import org.junit.Test;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
 
 import org.neo4j.backup.OnlineBackupKernelExtension;
 import org.neo4j.cluster.ClusterSettings;
@@ -310,8 +310,8 @@ public class SwitchToSlaveTest
         when( transactionIdStoreMock.getLastCommittedTransaction() ).thenReturn( new TransactionId( 42, 42 ) );
 
         MasterClientResolver masterClientResolver = mock( MasterClientResolver.class );
-        when( masterClientResolver.instantiate( anyString(), anyInt(), any( Monitors.class ), any( StoreId.class ),
-                any( LifeSupport.class ) ) ).thenReturn( masterClient );
+        when( masterClientResolver.instantiate( anyString(), anyInt(), anyString(), any( Monitors.class ),
+                any( StoreId.class ), any( LifeSupport.class ) ) ).thenReturn( masterClient );
 
         return spy( new SwitchToSlave( new File( "" ), NullLogService.getInstance(),
                 configMock(), resolver,

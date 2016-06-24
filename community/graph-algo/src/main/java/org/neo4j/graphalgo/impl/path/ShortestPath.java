@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -71,7 +71,7 @@ public class ShortestPath implements PathFinder<Path>
     private ShortestPathPredicate predicate;
 
     public interface ShortestPathPredicate {
-        boolean test(Path path);
+        boolean test( Path path );
     }
 
     /**
@@ -93,7 +93,13 @@ public class ShortestPath implements PathFinder<Path>
 
     public ShortestPath( int maxDepth, RelationshipExpander expander, ShortestPathPredicate predicate )
     {
-        this(maxDepth, toPathExpander( expander ));
+        this( maxDepth, toPathExpander( expander ) );
+        this.predicate = predicate;
+    }
+
+    public ShortestPath( int maxDepth, PathExpander expander, ShortestPathPredicate predicate )
+    {
+        this( maxDepth, expander );
         this.predicate = predicate;
     }
 

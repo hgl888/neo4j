@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,10 +19,10 @@
  */
 package org.neo4j.kernel.impl.security;
 
-import org.junit.Test;
-
 import java.io.File;
 import java.net.URL;
+
+import org.junit.Test;
 
 import org.neo4j.graphdb.DependencyResolver;
 import org.neo4j.graphdb.factory.GraphDatabaseSettings;
@@ -87,6 +87,27 @@ public class FileURLAccessRuleTest
         catch ( URLAccessValidationError error )
         {
             assertThat( error.getMessage(), equalTo( "configuration property 'allow_file_urls' is false" ) );
+        }
+    }
+
+    @Test
+    public void shouldThrowWhenRelativePathIsOutsideImportDirectory() throws Exception
+    {
+        File importDir = new File( "/tmp/neo4jtest" ).getAbsoluteFile();
+        final Config config = new Config(
+                MapUtil.stringMap( GraphDatabaseSettings.load_csv_file_url_root.name(), importDir.toString() ) );
+        final GraphDatabaseAPI gdb = mock( GraphDatabaseAPI.class );
+        final DependencyResolver mockResolver = mock( DependencyResolver.class );
+        when( gdb.getDependencyResolver() ).thenReturn( mockResolver );
+        when( mockResolver.resolveDependency( eq( Config.class ) ) ).thenReturn( config );
+        try
+        {
+            URLAccessRules.fileAccess().validate( gdb, new URL( "file:///../baz.csv" ) );
+            fail( "expected exception not thrown " );
+        }
+        catch ( URLAccessValidationError error )
+        {
+            assertThat( error.getMessage(), equalTo( "file URL points outside configured import directory" ) );
         }
     }
 

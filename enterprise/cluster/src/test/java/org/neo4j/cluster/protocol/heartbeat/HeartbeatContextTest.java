@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -89,7 +89,7 @@ public class HeartbeatContextTest
         when( context.getConfiguration() ).thenReturn( config );
         when( context.getMyId() ).thenReturn( instanceIds[0] );
 
-        MultiPaxosContext context = new MultiPaxosContext( instanceIds[0], Iterables.<ElectionRole, ElectionRole>iterable(
+        MultiPaxosContext context = new MultiPaxosContext( instanceIds[0], 10, Iterables.<ElectionRole, ElectionRole>iterable(
                         new ElectionRole( "coordinator" ) ), config,
                         Mockito.mock( Executor.class ), NullLogProvider.getInstance(),
                         Mockito.mock( ObjectInputStreamFactory.class), Mockito.mock( ObjectOutputStreamFactory.class),

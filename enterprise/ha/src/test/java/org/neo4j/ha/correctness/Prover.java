@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -81,11 +81,11 @@ public class Prover
         ClusterState state = new ClusterState(
                 asList(
                         newClusterInstance( new InstanceId( 1 ), new URI( instance1 ), new Monitors(), config,
-                                NullLogProvider.getInstance() ),
+                                10, NullLogProvider.getInstance() ),
                         newClusterInstance( new InstanceId( 2 ), new URI( instance2 ), new Monitors(), config,
-                                NullLogProvider.getInstance() ),
+                                10, NullLogProvider.getInstance() ),
                         newClusterInstance( new InstanceId( 3 ), new URI( instance3 ), new Monitors(), config,
-                                NullLogProvider.getInstance() ) ),
+                                10, NullLogProvider.getInstance() ) ),
                 emptySetOf( ClusterAction.class )
         );
 

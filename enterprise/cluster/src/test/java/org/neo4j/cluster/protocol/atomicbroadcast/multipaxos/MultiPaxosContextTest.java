@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -47,7 +47,7 @@ public class MultiPaxosContextTest
     {
         // Given
         MultiPaxosContext ctx = new MultiPaxosContext( new InstanceId( 1 ),
-                Collections.<ElectionRole>emptyList(),
+                10, Collections.<ElectionRole>emptyList(),
                 mock( ClusterConfiguration.class ), mock( Executor.class ),
                 NullLogProvider.getInstance(), new ObjectStreamFactory(),
                 new ObjectStreamFactory(), mock( AcceptorInstanceStore.class ), mock( Timeouts.class ),
@@ -77,7 +77,7 @@ public class MultiPaxosContextTest
         ElectionCredentialsProvider electionCredentials = mock( ElectionCredentialsProvider.class );
 
         MultiPaxosContext ctx = new MultiPaxosContext( new InstanceId( 1 ),
-                Collections.<ElectionRole>emptyList(),
+                10, Collections.<ElectionRole>emptyList(),
                 clusterConfig, executor,
                 NullLogProvider.getInstance(), objStream,
                 objStream, acceptorInstances, timeouts, electionCredentials );

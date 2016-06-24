@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -52,10 +52,9 @@ object IDPQueryGraphSolver {
  * written by Donald Kossmann and Konrad Stocker
  */
 case class IDPQueryGraphSolver(monitor: IDPQueryGraphSolverMonitor,
-                               maxTableSize: Int = 256,
+                               solverConfig: IDPSolverConfig = DefaultIDPSolverConfig,
                                leafPlanFinder: LogicalLeafPlan.Finder = leafPlanOptions,
                                config: QueryPlannerConfiguration = QueryPlannerConfiguration.default,
-                               solvers: Seq[QueryGraph => IDPSolverStep[PatternRelationship, LogicalPlan, LogicalPlanningContext]] = Seq(joinSolverStep(_), expandSolverStep(_)),
                                optionalSolvers: Seq[OptionalSolver] = Seq(applyOptional, outerHashJoin))
   extends QueryGraphSolver with PatternExpressionSolving {
 
@@ -109,14 +108,15 @@ case class IDPQueryGraphSolver(monitor: IDPQueryGraphSolverMonitor,
     val bestPlan =
       if (qg.patternRelationships.nonEmpty) {
 
-        val generators = solvers.map(_(qg))
+        val generators = solverConfig.solvers(qg).map(_(qg))
         val selectingGenerators = generators.map(_.map(plan => kit.select(plan, qg)))
         val generator = selectingGenerators.foldLeft(IDPSolverStep.empty[PatternRelationship, LogicalPlan, LogicalPlanningContext])(_ ++ _)
 
         val solver = new IDPSolver[PatternRelationship, LogicalPlan, LogicalPlanningContext](
           generator = generator,
           projectingSelector = kit.pickBest,
-          maxTableSize = maxTableSize,
+          maxTableSize = solverConfig.maxTableSize,
+          iterationDurationLimit = solverConfig.iterationDurationLimit,
           monitor = monitor
         )
 

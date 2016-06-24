@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -72,7 +72,7 @@ public class HeartbeatStateTest
         configuration.joined( instanceId, URI.create("cluster://1" ) );
         configuration.joined( new InstanceId( 2 ), URI.create("cluster://2" ));
 
-        MultiPaxosContext context = new MultiPaxosContext( instanceId, Iterables.<ElectionRole, ElectionRole>iterable(
+        MultiPaxosContext context = new MultiPaxosContext( instanceId, 10, Iterables.<ElectionRole, ElectionRole>iterable(
                         new ElectionRole( "coordinator" ) ), configuration,
                         Mockito.mock( Executor.class ), NullLogProvider.getInstance(),
                         Mockito.mock( ObjectInputStreamFactory.class), Mockito.mock( ObjectOutputStreamFactory.class),
@@ -103,7 +103,7 @@ public class HeartbeatStateTest
         configuration.joined( myId, URI.create("cluster://1" ) );
         configuration.joined( new InstanceId( 2 ), URI.create("cluster://2" ));
 
-        MultiPaxosContext context = new MultiPaxosContext( myId, Iterables.<ElectionRole, ElectionRole>iterable(
+        MultiPaxosContext context = new MultiPaxosContext( myId, 10, Iterables.<ElectionRole, ElectionRole>iterable(
                         new ElectionRole( "coordinator" ) ), configuration,
                         Mockito.mock( Executor.class ),  NullLogProvider.getInstance(),
                         Mockito.mock( ObjectInputStreamFactory.class), Mockito.mock( ObjectOutputStreamFactory.class),
@@ -136,7 +136,7 @@ public class HeartbeatStateTest
         configuration.joined( otherInstance, URI.create("cluster://2" ));
 
         MultiPaxosContext context = new MultiPaxosContext(
-                instanceId,
+                instanceId, 10,
                 Iterables.<ElectionRole,ElectionRole>iterable( new ElectionRole( "coordinator" ) ),
                 configuration,
                 Mockito.mock( Executor.class ),
@@ -181,6 +181,7 @@ public class HeartbeatStateTest
 
         MultiPaxosContext context = new MultiPaxosContext(
                 instanceId,
+                10,
                 Iterables.<ElectionRole,ElectionRole>iterable( new ElectionRole( "coordinator" ) ),
                 configuration,
                 mock( Executor.class ),

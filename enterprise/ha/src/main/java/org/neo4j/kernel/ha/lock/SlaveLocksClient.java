@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -23,17 +23,17 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.neo4j.com.ComException;
 import org.neo4j.com.RequestContext;
 import org.neo4j.com.Response;
 import org.neo4j.graphdb.TransientDatabaseFailureException;
 import org.neo4j.kernel.AvailabilityGuard;
 import org.neo4j.kernel.AvailabilityGuard.UnavailableException;
 import org.neo4j.kernel.DeadlockDetectedException;
-import org.neo4j.kernel.api.exceptions.TransactionFailureException;
 import org.neo4j.kernel.ha.com.RequestContextFactory;
 import org.neo4j.kernel.ha.com.master.Master;
 import org.neo4j.kernel.impl.locking.AcquireLockTimeoutException;
-import org.neo4j.kernel.impl.locking.LockManager;
+import org.neo4j.kernel.impl.locking.LockClientStoppedException;
 import org.neo4j.kernel.impl.locking.Locks;
 import org.neo4j.kernel.impl.locking.ResourceTypes;
 
@@ -59,20 +59,24 @@ class SlaveLocksClient implements Locks.Client
     // Using atomic ints to avoid creating garbage through boxing.
     private final Map<Locks.ResourceType, Map<Long, AtomicInteger>> sharedLocks;
     private final Map<Locks.ResourceType, Map<Long, AtomicInteger>> exclusiveLocks;
-    private boolean initialized = false;
+    private final boolean txTerminationAwareLocks;
+    private boolean initialized;
+    private volatile boolean stopped;
 
     public SlaveLocksClient(
             Master master,
             Locks.Client local,
             Locks localLockManager,
             RequestContextFactory requestContextFactory,
-            AvailabilityGuard availabilityGuard )
+            AvailabilityGuard availabilityGuard,
+            boolean txTerminationAwareLocks )
     {
         this.master = master;
         this.client = local;
         this.localLockManager = localLockManager;
         this.requestContextFactory = requestContextFactory;
         this.availabilityGuard = availabilityGuard;
+        this.txTerminationAwareLocks = txTerminationAwareLocks;
         sharedLocks = new HashMap<>();
         exclusiveLocks = new HashMap<>();
     }
@@ -93,6 +97,8 @@ class SlaveLocksClient implements Locks.Client
     @Override
     public void acquireShared( Locks.ResourceType resourceType, long resourceId ) throws AcquireLockTimeoutException
     {
+        assertNotStopped();
+
         Map<Long, AtomicInteger> lockMap = getLockMap( sharedLocks, resourceType );
         AtomicInteger preExistingLock = lockMap.get( resourceId );
         if ( preExistingLock != null )
@@ -118,6 +124,8 @@ class SlaveLocksClient implements Locks.Client
     public void acquireExclusive( Locks.ResourceType resourceType, long resourceId ) throws
             AcquireLockTimeoutException
     {
+        assertNotStopped();
+
         Map<Long, AtomicInteger> lockMap = getLockMap( exclusiveLocks, resourceType );
 
         AtomicInteger preExistingLock = lockMap.get( resourceId );
@@ -154,11 +162,13 @@ class SlaveLocksClient implements Locks.Client
     @Override
     public void releaseShared( Locks.ResourceType resourceType, long resourceId )
     {
+        assertNotStopped();
+
         Map<Long, AtomicInteger> lockMap = getLockMap( sharedLocks, resourceType );
         AtomicInteger counter = lockMap.get( resourceId );
         if ( counter == null )
         {
-            throw new IllegalStateException( this + " cannot release lock it does not hold: EXCLUSIVE " +
+            throw new IllegalStateException( this + " cannot release lock it does not hold: SHARED " +
                     resourceType + "[" + resourceId + "]" );
         }
         if ( counter.decrementAndGet() == 0 )
@@ -171,6 +181,8 @@ class SlaveLocksClient implements Locks.Client
     @Override
     public void releaseExclusive( Locks.ResourceType resourceType, long resourceId )
     {
+        assertNotStopped();
+
         Map<Long, AtomicInteger> lockMap = getLockMap( exclusiveLocks, resourceType );
         AtomicInteger counter = lockMap.get( resourceId );
         if ( counter == null )
@@ -186,38 +198,52 @@ class SlaveLocksClient implements Locks.Client
     }
 
     @Override
-    public void releaseAll()
+    public void stop()
     {
+        if ( txTerminationAwareLocks )
+        {
+            client.stop();
+            endLockSessionOnMaster( false );
+            stopped = true;
+        }
+    }
+
+    @Override
+    public void close()
+    {
+        client.close();
         sharedLocks.clear();
         exclusiveLocks.clear();
-        client.releaseAll();
         if ( initialized )
         {
-            try ( Response<Void> ignored = master.endLockSession( newRequestContextFor( client ), true ) )
+            if ( !stopped )
             {
-                // Lock session is closed on master at this point
+                endLockSessionOnMaster( true );
+                stopped = false;
             }
             initialized = false;
         }
     }
 
     @Override
-    public void stop()
-    {
-        throw new UnsupportedOperationException( "Lock client stop is unsupported on slave side." );
-    }
-
-    @Override
-    public void close()
-    {
-        releaseAll();
-        client.close();
-    }
-
-    @Override
     public int getLockSessionId()
     {
+        assertNotStopped();
         return initialized ? client.getLockSessionId() : -1;
+    }
+
+    private void endLockSessionOnMaster( boolean success )
+    {
+        try ( Response<Void> ignored = master.endLockSession( newRequestContextFor( client ), success ) )
+        {
+            // Lock session is closed on master at this point
+        }
+        catch ( ComException e )
+        {
+            throw new DistributedLockFailureException(
+                    "Failed to end the lock session on the master (which implies releasing all held locks)",
+                    master, e );
+        }
     }
 
     private boolean getReadLockOnMaster( Locks.ResourceType resourceType, long resourceId )
@@ -234,6 +260,10 @@ class SlaveLocksClient implements Locks.Client
             {
                 return receiveLockResponse( response );
             }
+            catch ( ComException e )
+            {
+                throw new DistributedLockFailureException( "Cannot get shared lock on master", master, e );
+            }
         }
         else
         {
@@ -248,6 +278,10 @@ class SlaveLocksClient implements Locks.Client
         try ( Response<LockResult> response = master.acquireExclusiveLock( requestContext, resourceType, resourceId ) )
         {
             return receiveLockResponse( response );
+        }
+        catch ( ComException e )
+        {
+            throw new DistributedLockFailureException( "Cannot get exclusive lock on master", master, e );
         }
     }
 
@@ -287,12 +321,20 @@ class SlaveLocksClient implements Locks.Client
             {
                 // Lock session is initialized on master at this point
             }
-            catch ( TransactionFailureException e )
+            catch ( Exception exception )
             {
                 // Temporary wrapping, we should review the exception structure of the Locks API to allow this to
                 // not use runtime exceptions here.
-                throw new org.neo4j.graphdb.TransactionFailureException( "Failed to acquire lock in cluster: " +
-                        e.getMessage(), e );
+                ComException e;
+                if ( exception instanceof ComException )
+                {
+                    e = (ComException) exception;
+                }
+                else
+                {
+                    e = new ComException( exception );
+                }
+                throw new DistributedLockFailureException( "Failed to start a new lock session on master", master, e );
             }
             initialized = true;
         }
@@ -305,9 +347,15 @@ class SlaveLocksClient implements Locks.Client
 
     private UnsupportedOperationException newUnsupportedDirectTryLockUsageException()
     {
-        return new UnsupportedOperationException( "At the time of adding \"try lock\" semantics there was no usage of" +
-                " " +
-                getClass().getSimpleName() + " calling it directly. It was designed to be called on a local " +
-                LockManager.class.getSimpleName() + " delegated to from within the waiting version" );
+        return new UnsupportedOperationException(
+                "Distributed tryLocks are not supported. They only work with local lock managers." );
+    }
+
+    private void assertNotStopped()
+    {
+        if ( stopped )
+        {
+            throw new LockClientStoppedException( this );
+        }
     }
 }

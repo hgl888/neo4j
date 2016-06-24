@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -55,7 +55,7 @@ public class ClusterContextTest
         HeartbeatContext heartbeatContext = mock(HeartbeatContext.class);
         when( heartbeatContext.getFailed() ).thenReturn( Collections.<InstanceId>emptySet() );
 
-        MultiPaxosContext multiPaxosContext = new MultiPaxosContext( me, Iterables.<ElectionRole, ElectionRole
+        MultiPaxosContext multiPaxosContext = new MultiPaxosContext( me, 10, Iterables.<ElectionRole, ElectionRole
                 >iterable(
                 new ElectionRole( coordinatorRole ) ), mock( ClusterConfiguration.class ),
                 new Executor()
@@ -102,7 +102,7 @@ public class ClusterContextTest
         HeartbeatContext heartbeatContext = mock(HeartbeatContext.class);
         when( heartbeatContext.getFailed() ).thenReturn( Collections.<InstanceId>emptySet() );
 
-        MultiPaxosContext multiPaxosContext = new MultiPaxosContext( me, Iterables.<ElectionRole, ElectionRole
+        MultiPaxosContext multiPaxosContext = new MultiPaxosContext( me, 10, Iterables.<ElectionRole, ElectionRole
                 >iterable(
                 new ElectionRole( coordinatorRole ) ), mock( ClusterConfiguration.class ),
                 new Executor()
@@ -142,7 +142,7 @@ public class ClusterContextTest
         HeartbeatContext heartbeatContext = mock(HeartbeatContext.class);
         when( heartbeatContext.getFailed() ).thenReturn( Collections.<InstanceId>emptySet() );
 
-        MultiPaxosContext multiPaxosContext = new MultiPaxosContext( me, Iterables.<ElectionRole, ElectionRole
+        MultiPaxosContext multiPaxosContext = new MultiPaxosContext( me, 10, Iterables.<ElectionRole, ElectionRole
                 >iterable(
                 new ElectionRole( coordinatorRole ) ), mock( ClusterConfiguration.class ),
                 new Executor()
@@ -189,7 +189,7 @@ public class ClusterContextTest
         HeartbeatContext heartbeatContext = mock(HeartbeatContext.class);
         when( heartbeatContext.getFailed() ).thenReturn( Collections.<InstanceId>emptySet() );
 
-        MultiPaxosContext multiPaxosContext = new MultiPaxosContext( me, Iterables.<ElectionRole, ElectionRole
+        MultiPaxosContext multiPaxosContext = new MultiPaxosContext( me, 10, Iterables.<ElectionRole, ElectionRole
                 >iterable(
                 new ElectionRole( coordinatorRole ) ), mock( ClusterConfiguration.class ),
                 new Executor()

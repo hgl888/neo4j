@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -48,6 +48,7 @@ import org.neo4j.io.fs.DefaultFileSystemAbstraction;
 import org.neo4j.io.fs.FileSystemAbstraction;
 import org.neo4j.kernel.GraphDatabaseAPI;
 import org.neo4j.kernel.api.ReadOperations;
+import org.neo4j.kernel.configuration.Config;
 import org.neo4j.kernel.impl.core.Token;
 import org.neo4j.kernel.impl.logging.NullLogService;
 import org.neo4j.kernel.impl.store.NeoStores;
@@ -87,7 +88,7 @@ public class CsvInputBatchImportIT
     {
         // GIVEN
         BatchImporter importer = new ParallelBatchImporter( directory.graphDbDir(),
-                smallBatchSizeConfig(), NullLogService.getInstance(), invisible() );
+                smallBatchSizeConfig(), NullLogService.getInstance(), invisible(), new Config() );
         List<InputNode> nodeData = randomNodeData();
         List<InputRelationship> relationshipData = randomRelationshipData( nodeData );
 

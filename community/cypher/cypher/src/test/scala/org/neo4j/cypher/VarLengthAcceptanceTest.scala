@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -322,6 +322,26 @@ class VarLengthAcceptanceTest extends ExecutionEngineFunSuite with QueryStatisti
     result should haveNoneRelFilter
     result.columnAs("c").toSet should be(generation(5))
   }
+
+  test("should use variable of already matched rel in a varlenght path") {
+    eengine.execute("""create
+                      |(_0:`Node` ),
+                      |(_1:`Node` ),
+                      |(_2:`Node` ),
+                      |(_3:`Node` ),
+                      |_0-[:EDGE]->_1,
+                      |_1-[:EDGE]->_2,
+                      |_2-[:EDGE]->_3""".stripMargin)
+
+    val result = executeWithAllPlanners("""MATCH ()-[r:`EDGE`]-()
+                                          |WITH r
+                                          |MATCH p=(n)-[*0..1]-()-[r]-()-[*0..1]-(m)
+                                          |RETURN count(p) as c""".stripMargin)
+
+    result.columnAs[Long]("c").toList should equal(List(32))
+    result.close()
+  }
+
 
   def haveNoneRelFilter: Matcher[InternalExecutionResult] = new Matcher[InternalExecutionResult] {
     override def apply(result: InternalExecutionResult): MatchResult = {

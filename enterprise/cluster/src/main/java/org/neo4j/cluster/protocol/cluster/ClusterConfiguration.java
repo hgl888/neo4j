@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -47,7 +47,6 @@ public class ClusterConfiguration
     private final List<URI> candidateMembers;
     private Map<InstanceId, URI> members;
     private Map<String, InstanceId> roles = new HashMap<String, InstanceId>();
-    private int allowedFailures = 1;
 
     public ClusterConfiguration( String name, LogProvider logProvider, String... members )
     {
@@ -175,11 +174,6 @@ public class ClusterConfiguration
         return roles;
     }
 
-    public int getAllowedFailures()
-    {
-        return allowedFailures;
-    }
-
     public void left()
     {
         this.members = new HashMap<InstanceId, URI>();
@@ -259,10 +253,6 @@ public class ClusterConfiguration
 
         ClusterConfiguration that = (ClusterConfiguration) o;
 
-        if ( allowedFailures != that.allowedFailures )
-        {
-            return false;
-        }
         if ( !candidateMembers.equals( that.candidateMembers ) )
         {
             return false;
@@ -290,7 +280,6 @@ public class ClusterConfiguration
         result = 31 * result + candidateMembers.hashCode();
         result = 31 * result + members.hashCode();
         result = 31 * result + roles.hashCode();
-        result = 31 * result + allowedFailures;
         return result;
     }
 }

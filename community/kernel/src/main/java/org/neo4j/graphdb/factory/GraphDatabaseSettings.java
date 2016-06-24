@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -115,7 +115,7 @@ public abstract class GraphDatabaseSettings
     @Internal
     public static final Setting<String> cypher_runtime = setting(
             "dbms.cypher.runtime",
-            options( "INTERPRETED", "COMPILED", DEFAULT ), DEFAULT );
+            options( "INTERPRETED", DEFAULT ), DEFAULT );
 
     @Description( "Enable tracing of compilation in cypher." )
     @Internal
@@ -137,6 +137,20 @@ public abstract class GraphDatabaseSettings
     @Internal
     public static Setting<Long> query_non_indexed_label_warning_threshold = setting(
             "dbms.cypher.non_indexed_label_warning_threshold", LONG, "10000" );
+
+    @Description( "To improve IDP query planning time, we can restrict the internal planning table size, " +
+                  "triggering compaction of candidate plans. The smaller the threshold the faster the planning, " +
+                  "but the higher the risk of sub-optimal plans." )
+    @Internal
+    public static Setting<Integer> cypher_idp_solver_table_threshold = setting(
+            "dbms.cypher.idp_solver_table_threshold", INTEGER, "128", min( 16 ) );
+
+    @Description( "To improve IDP query planning time, we can restrict the internal planning loop duration, " +
+                  "triggering more frequent compaction of candidate plans. The smaller the threshold the " +
+                  "faster the planning, but the higher the risk of sub-optimal plans." )
+    @Internal
+    public static Setting<Long> cypher_idp_solver_duration_threshold = setting(
+            "dbms.cypher.idp_solver_duration_threshold", LONG, "1000", min( 10L ) );
 
     @Description("The minimum lifetime of a query plan before a query is considered for replanning")
     public static Setting<Long> cypher_min_replan_interval = setting( "dbms.cypher.min_replan_interval", DURATION, "1s" );
@@ -477,6 +491,9 @@ public abstract class GraphDatabaseSettings
 
     @Description( "Log executed queries that take longer than the configured threshold" )
     public static final Setting<File> log_queries_filename = setting("dbms.querylog.filename", PATH, NO_DEFAULT );
+
+    @Description( "Log parameters for executed queries that took longer than the configured threshold." )
+    public static final Setting<Boolean> log_queries_parameter_logging_enabled = setting( "dbms.querylog.parameter_logging_enabled", BOOLEAN, TRUE );
 
     @Description("If the execution of query takes more time than this threshold, the query is logged - " +
                  "provided query logging is enabled. Defaults to 0 seconds, that is all queries are logged.")

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -94,7 +94,6 @@ public class HaBeanIT
     {
         assertTrue( "should be available", ha.isAvailable() );
         assertEquals( "should be master", HighAvailabilityModeSwitcher.MASTER, ha.getRole() );
-        assertEquals( "should be instance 1", "1", ha.getInstanceId() );
     }
 
     @Test

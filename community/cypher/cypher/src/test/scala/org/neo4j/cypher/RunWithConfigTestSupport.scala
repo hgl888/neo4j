@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -28,7 +28,7 @@ trait RunWithConfigTestSupport {
   def runWithConfig(m: (String, String)*)(run: ExecutionEngine => Unit) = {
     val config: util.Map[String, String] = m.toMap.asJava
 
-    val graph = new ImpermanentGraphDatabase(config) with Snitch
+    val graph = new ImpermanentGraphDatabase(config)
     try {
       val engine = new ExecutionEngine(graph)
       run(engine)

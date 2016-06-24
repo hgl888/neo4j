@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -85,6 +85,7 @@ public class LuceneIndexAccessorReaderTest extends AbstractLuceneIndexAccessorRe
                 new Term( "string", "aaa" ),
                 new Term( "string", "ccc" )
         );
+        when(reader.numDocs() ).thenReturn( 3 );
 
         // When
         final DoubleLongRegister output = Registers.newDoubleLongRegister();
@@ -106,6 +107,7 @@ public class LuceneIndexAccessorReaderTest extends AbstractLuceneIndexAccessorRe
                 new Term( NODE_ID_KEY, "aaa" ), // <- this should be ignored
                 new Term( "string", "bbb" )
         );
+        when(reader.numDocs() ).thenReturn( 1 );
 
         // When
 

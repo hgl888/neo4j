@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -99,12 +99,10 @@ public interface Locks extends Lifecycle
         /** Release a set of exclusive locks */
         void releaseExclusive( ResourceType resourceType, long resourceId );
 
-        /** Release all locks. */
-        void releaseAll();
-
         /**
          * Stop all active lock waiters and release them. All already held locks remains.
          * All new attempts to acquire any locks will cause exceptions.
+         * This client can and should only be {@link #close() closed} afterwards.
          */
         void stop();
 

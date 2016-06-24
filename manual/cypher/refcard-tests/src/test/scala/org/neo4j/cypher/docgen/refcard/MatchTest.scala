@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -54,9 +54,9 @@ class MatchTest extends RefcardTest with QueryStatisticsTestSupport {
 //
 
 MATCH (n:Person)-[:KNOWS]->(m:Person)
-WHERE n.name="Alice"
+WHERE n.name = "Alice"
 
-RETURN n,m###
+RETURN n, m###
 
 Node patterns can contain labels and properties.
 
@@ -66,16 +66,16 @@ Node patterns can contain labels and properties.
 MATCH (n)-->(m)
 
 WHERE id(n) = %A% AND id(m) = %B%
-RETURN n,m###
+RETURN n, m###
 
 Any pattern can be used in `MATCH`.
 
 ###assertion=related
 //
 
-MATCH (n {name:'Alice'})-->(m)
+MATCH (n {name: "Alice"})-->(m)
 
-RETURN n,m###
+RETURN n, m###
 
 Patterns with node properties.
 
@@ -103,7 +103,7 @@ Optional pattern, ++NULL++s will be used for missing parts.
 MATCH (m:Person)
 USING SCAN m:Person
 
-WHERE m.name = 'Alice'
+WHERE m.name = "Alice"
 
 RETURN m###
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -30,7 +30,7 @@ class NodeIndexSeekAcceptanceTest extends ExecutionEngineFunSuite with NewPlanne
     setUpDatabaseForTests()
 
     // When
-    val result = executeWithAllPlannersAndRuntimes("MATCH (n:Crew) WHERE n.name = 'Neo' AND n.name = 'Morpheus' RETURN n")
+    val result = executeWithAllPlanners("MATCH (n:Crew) WHERE n.name = 'Neo' AND n.name = 'Morpheus' RETURN n")
 
     // Then
     result should (use("NodeIndexSeek") and be(empty))
@@ -73,7 +73,7 @@ class NodeIndexSeekAcceptanceTest extends ExecutionEngineFunSuite with NewPlanne
     graph.createIndex("L", "l")
     graph.createIndex("R", "r")
 
-    val result = executeWithAllPlannersAndRuntimes("MATCH (l:L {l: 9})-[:REL]->(r:R {r: 23}) RETURN l, r")
+    val result = executeWithAllPlanners("MATCH (l:L {l: 9})-[:REL]->(r:R {r: 23}) RETURN l, r")
     result should (use("NodeIndexSeek") and have size 100)
   }
 

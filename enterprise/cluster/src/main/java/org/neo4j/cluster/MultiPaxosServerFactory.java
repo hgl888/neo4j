@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -83,7 +83,8 @@ public class MultiPaxosServerFactory
     }
 
     @Override
-    public ProtocolServer newProtocolServer( InstanceId me, TimeoutStrategy timeoutStrategy, MessageSource input,
+    public ProtocolServer newProtocolServer( InstanceId me, int maxAcceptors,
+                                             TimeoutStrategy timeoutStrategy, MessageSource input,
                                              MessageSender output, AcceptorInstanceStore acceptorInstanceStore,
                                              ElectionCredentialsProvider electionCredentialsProvider,
                                              Executor stateMachineExecutor,
@@ -95,7 +96,7 @@ public class MultiPaxosServerFactory
         // Create state machines
         Timeouts timeouts = new Timeouts( timeoutStrategy );
 
-        final MultiPaxosContext context = new MultiPaxosContext( me,
+        final MultiPaxosContext context = new MultiPaxosContext( me, maxAcceptors,
                 Iterables.<ElectionRole, ElectionRole>iterable( new ElectionRole( ClusterConfiguration.COORDINATOR ) ),
                 new ClusterConfiguration( initialConfig.getName(), logging,
                         initialConfig.getMemberURIs() ),

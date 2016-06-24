@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -79,7 +79,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
-
 import static org.neo4j.consistency.store.StoreAssertions.assertConsistentStore;
 import static org.neo4j.helpers.collection.Iterables.concat;
 import static org.neo4j.helpers.collection.Iterables.count;
@@ -255,7 +254,7 @@ public class StoreUpgradeIntegrationTest
             }
             finally
             {
-                clusterManager.shutdown();
+                clusterManager.safeShutdown();
             }
 
             assertConsistentStore( new File( master.getStoreDir() ) );

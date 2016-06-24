@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -201,7 +201,7 @@ public class DataSourceModule
                 platformModule.monitors.newMonitor( PhysicalLogFile.Monitor.class ),
                 editionModule.headerInformationFactory, startupStatistics, nodeManager, guard, indexStore,
                 editionModule.commitProcessFactory, pageCache, editionModule.constraintSemantics,
-                platformModule.monitors, platformModule.tracers ) );
+                platformModule.monitors, platformModule.tracers, editionModule.idGeneratorFactory ) );
         dataSourceManager.register( neoStoreDataSource );
 
         life.add( new MonitorGc( config, logging.getInternalLog( MonitorGc.class ) ) );

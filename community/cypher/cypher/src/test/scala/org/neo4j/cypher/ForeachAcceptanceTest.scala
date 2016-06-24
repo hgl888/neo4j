@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -19,7 +19,7 @@
  */
 package org.neo4j.cypher
 
-class ForeachAcceptanceTest extends ExecutionEngineFunSuite {
+class ForeachAcceptanceTest extends ExecutionEngineFunSuite with QueryStatisticsTestSupport {
 
   test("nested foreach") {
     // given
@@ -70,5 +70,23 @@ class ForeachAcceptanceTest extends ExecutionEngineFunSuite {
     result.head.get("e.foo") should equal(Some("e_bar"))
     result.head.get("i.foo") should equal(Some("i_bar"))
     result.head.get("p.foo") should equal(Some("p_bar"))
+  }
+
+
+  test("Foreach and delete should work together without breaking on unknown identifier types") {
+    // given
+    val node = createLabeledNode("Label")
+    relate(node, createNode())
+
+    val query =
+      """MATCH (n: Label)
+        |OPTIONAL MATCH (n)-[rel]->()
+        |FOREACH (r IN CASE WHEN rel IS NOT NULL THEN [rel] ELSE [] END | DELETE r )""".stripMargin
+
+    // when
+    val result = execute(query)
+
+    // then
+    assertStats(result, relationshipsDeleted = 1)
   }
 }

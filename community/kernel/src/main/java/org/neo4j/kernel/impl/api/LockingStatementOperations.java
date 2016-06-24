@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -20,7 +20,9 @@
 package org.neo4j.kernel.impl.api;
 
 import java.util.Iterator;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import org.neo4j.function.Consumer;
 import org.neo4j.function.Function;
 import org.neo4j.kernel.api.Statement;
 import org.neo4j.kernel.api.constraints.NodePropertyConstraint;
@@ -38,8 +40,8 @@ import org.neo4j.kernel.api.exceptions.schema.ConstraintValidationKernelExceptio
 import org.neo4j.kernel.api.exceptions.schema.CreateConstraintFailureException;
 import org.neo4j.kernel.api.exceptions.schema.DropConstraintFailureException;
 import org.neo4j.kernel.api.exceptions.schema.DropIndexFailureException;
-import org.neo4j.kernel.api.exceptions.schema.SchemaRuleNotFoundException;
 import org.neo4j.kernel.api.exceptions.schema.ProcedureConstraintViolation;
+import org.neo4j.kernel.api.exceptions.schema.SchemaRuleNotFoundException;
 import org.neo4j.kernel.api.index.IndexDescriptor;
 import org.neo4j.kernel.api.index.InternalIndexState;
 import org.neo4j.kernel.api.procedures.ProcedureDescriptor;
@@ -57,6 +59,8 @@ import org.neo4j.kernel.impl.locking.Locks;
 import org.neo4j.kernel.impl.locking.ResourceTypes;
 import org.neo4j.kernel.impl.store.SchemaStorage;
 
+import static java.lang.Math.max;
+import static java.lang.Math.min;
 import static org.neo4j.kernel.impl.locking.ResourceTypes.PROCEDURE;
 import static org.neo4j.kernel.impl.locking.ResourceTypes.SCHEMA;
 import static org.neo4j.kernel.impl.locking.ResourceTypes.procedureResourceId;
@@ -146,7 +150,7 @@ public class LockingStatementOperations implements
     }
 
     @Override
-    public <K, V> V schemaStateGetOrCreate( KernelStatement state, K key, Function<K, V> creator )
+    public <K, V> V schemaStateGetOrCreate( KernelStatement state, K key, Function<K,V> creator )
     {
         state.locks().acquireShared( ResourceTypes.SCHEMA, schemaResource() );
         state.assertOpen();
@@ -194,8 +198,8 @@ public class LockingStatementOperations implements
     }
 
     @Override
-    public InternalIndexState indexGetState( KernelStatement state,
-            IndexDescriptor descriptor ) throws IndexNotFoundKernelException
+    public InternalIndexState indexGetState( KernelStatement state, IndexDescriptor descriptor )
+            throws IndexNotFoundKernelException
     {
         state.locks().acquireShared( ResourceTypes.SCHEMA, schemaResource() );
         state.assertOpen();
@@ -220,8 +224,7 @@ public class LockingStatementOperations implements
     }
 
     @Override
-    public Long indexGetOwningUniquenessConstraintId( KernelStatement state,
-            IndexDescriptor index ) throws SchemaRuleNotFoundException
+    public Long indexGetOwningUniquenessConstraintId( KernelStatement state, IndexDescriptor index ) throws SchemaRuleNotFoundException
     {
         state.locks().acquireShared( ResourceTypes.SCHEMA, schemaResource() );
         state.assertOpen();
@@ -262,6 +265,35 @@ public class LockingStatementOperations implements
     }
 
     @Override
+    public int nodeDetachDelete( final KernelStatement state, final long nodeId ) throws EntityNotFoundException
+    {
+        final AtomicInteger count = new AtomicInteger(  );
+        TwoPhaseNodeForRelationshipLocking locking = new TwoPhaseNodeForRelationshipLocking( entityReadDelegate,
+                new Consumer<Long>()
+                {
+                    @Override
+                    public void accept( Long relId )
+                    {
+                        state.assertOpen();
+                        try
+                        {
+                            entityWriteDelegate.relationshipDelete( state, relId );
+                            count.incrementAndGet();
+                        }
+                        catch ( EntityNotFoundException e )
+                        {
+                            // it doesn't matter...
+                        }
+                    }
+                } );
+
+        locking.lockAllNodesAndConsumeRelationships( nodeId, state );
+        state.assertOpen();
+        entityWriteDelegate.nodeDetachDelete( state, nodeId );
+        return count.get();
+    }
+
+    @Override
     public long nodeCreate( KernelStatement statement )
     {
         return entityWriteDelegate.nodeCreate( statement );
@@ -275,38 +307,32 @@ public class LockingStatementOperations implements
             throws EntityNotFoundException
     {
         state.locks().acquireShared( ResourceTypes.SCHEMA, schemaResource() );
-
-        // Order the locks to lower the risk of deadlocks with other threads adding rels concurrently
-        if ( startNodeId < endNodeId )
-        {
-            state.locks().acquireExclusive( ResourceTypes.NODE, startNodeId );
-            state.locks().acquireExclusive( ResourceTypes.NODE, endNodeId );
-        }
-        else
-        {
-            state.locks().acquireExclusive( ResourceTypes.NODE, endNodeId );
-            state.locks().acquireExclusive( ResourceTypes.NODE, startNodeId );
-        }
-        state.assertOpen();
+        lockRelationshipNodes( state, startNodeId, endNodeId );
         return entityWriteDelegate.relationshipCreate( state, relationshipTypeId, startNodeId, endNodeId );
     }
 
     @Override
     public void relationshipDelete( final KernelStatement state, long relationshipId ) throws EntityNotFoundException
     {
-        entityReadDelegate.relationshipVisit( state, relationshipId,
-                new RelationshipVisitor<RuntimeException>()
-                {
-                    @Override
-                    public void visit( long relId, int type, long startNode, long endNode )
-                    {
-                        state.locks().acquireExclusive( ResourceTypes.NODE, startNode );
-                        state.locks().acquireExclusive( ResourceTypes.NODE, endNode );
-                    }
-                } );
-        state.locks().acquireExclusive( ResourceTypes.RELATIONSHIP, relationshipId );
+        entityReadDelegate.relationshipVisit(state, relationshipId, new RelationshipVisitor<RuntimeException>() {
+            @Override
+            public void visit(long relId, int type, long startNode, long endNode) {
+                lockRelationshipNodes(state, startNode, endNode);
+            }
+        });
+        state.locks().acquireExclusive(ResourceTypes.RELATIONSHIP, relationshipId);
         state.assertOpen();
-        entityWriteDelegate.relationshipDelete( state, relationshipId );
+        entityWriteDelegate.relationshipDelete(state, relationshipId);
+    }
+
+    private void lockRelationshipNodes( KernelStatement state, long startNodeId, long endNodeId )
+    {
+        // Order the locks to lower the risk of deadlocks with other threads creating/deleting rels concurrently
+        state.locks().acquireExclusive( ResourceTypes.NODE, min( startNodeId, endNodeId ) );
+        if ( startNodeId != endNodeId )
+        {
+            state.locks().acquireExclusive( ResourceTypes.NODE, max( startNodeId, endNodeId ) );
+        }
     }
 
     @Override
@@ -506,7 +532,7 @@ public class LockingStatementOperations implements
     }
 
     @Override
-    public void acquireShared( KernelStatement state, Locks.ResourceType resourceType, long resourceId )
+    public void acquireShared(KernelStatement state, Locks.ResourceType resourceType, long resourceId )
     {
         state.locks().acquireShared( resourceType, resourceId );
         state.assertOpen();

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 "Neo Technology,"
+ * Copyright (c) 2002-2016 "Neo Technology,"
  * Network Engine for Objects in Lund AB [http://neotechnology.com]
  *
  * This file is part of Neo4j.
@@ -27,11 +27,15 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.neo4j.collection.pool.LinkedQueuePool;
 import org.neo4j.collection.pool.MarshlandPool;
 import org.neo4j.function.Factory;
+import org.neo4j.function.Supplier;
 import org.neo4j.graphdb.DatabaseShutdownException;
+import org.neo4j.graphdb.config.Setting;
 import org.neo4j.helpers.Clock;
 import org.neo4j.kernel.api.KernelTransaction;
 import org.neo4j.kernel.api.labelscan.LabelScanStore;
 import org.neo4j.kernel.api.txstate.LegacyIndexTransactionState;
+import org.neo4j.kernel.configuration.Config;
+import org.neo4j.kernel.configuration.Settings;
 import org.neo4j.kernel.impl.api.index.IndexingService;
 import org.neo4j.kernel.impl.api.index.SchemaIndexProviderMap;
 import org.neo4j.kernel.impl.api.state.ConstraintIndexCreator;
@@ -53,6 +57,7 @@ import org.neo4j.kernel.lifecycle.LifecycleAdapter;
 import org.neo4j.kernel.monitoring.tracing.Tracers;
 
 import static java.util.Collections.newSetFromMap;
+import static org.neo4j.kernel.configuration.Settings.setting;
 
 /**
  * Central source of transactions in the database.
@@ -62,13 +67,19 @@ import static java.util.Collections.newSetFromMap;
  * for enumerating all running transactions. During normal operation, acquiring new transactions and enumerating live
  * ones requires no synchronization (although the live list is not guaranteed to be exact).
  */
-public class KernelTransactions extends LifecycleAdapter implements Factory<KernelTransaction>
+public class KernelTransactions extends LifecycleAdapter
+        implements Factory<KernelTransaction>, // For providing KernelTransaction instances
+        Supplier<KernelTransactionsSnapshot>   // For providing KernelTransactionSnapshots
 {
+    public static final Setting<Boolean> tx_termination_aware_locks = setting(
+            "unsupported.dbms.tx_termination_aware_locks", Settings.BOOLEAN, Settings.FALSE );
+
     // Transaction dependencies
 
     private final NeoStoreTransactionContextFactory neoStoreTransactionContextFactory;
     private final NeoStores neoStores;
     private final Locks locks;
+    private final boolean txTerminationAwareLocks;
     private final IntegrityValidator integrityValidator;
     private final ConstraintIndexCreator constraintIndexCreator;
     private final IndexingService indexingService;
@@ -120,11 +131,13 @@ public class KernelTransactions extends LifecycleAdapter implements Factory<Kern
                                ConstraintSemantics constraintSemantics,
                                TransactionMonitor transactionMonitor,
                                LifeSupport dataSourceLife, ProcedureCache procedureCache,
+                               Config config,
                                Tracers tracers )
     {
         this.neoStoreTransactionContextFactory = neoStoreTransactionContextFactory;
         this.neoStores = neoStores;
         this.locks = locks;
+        this.txTerminationAwareLocks = config.get( tx_termination_aware_locks );
         this.integrityValidator = integrityValidator;
         this.constraintIndexCreator = constraintIndexCreator;
         this.indexingService = indexingService;
@@ -154,19 +167,18 @@ public class KernelTransactions extends LifecycleAdapter implements Factory<Kern
         @Override
         public KernelTransactionImplementation newInstance()
         {
-            Locks.Client locksClient = locks.newClient();
-            NeoStoreTransactionContext context = neoStoreTransactionContextFactory.newInstance( locksClient );
-            TransactionRecordState recordState = new TransactionRecordState(
-                    neoStores, integrityValidator, context );
+            NeoStoreTransactionContext context = neoStoreTransactionContextFactory.newInstance();
+
+            TransactionRecordState recordState = new TransactionRecordState( neoStores, integrityValidator, context );
             LegacyIndexTransactionState legacyIndexTransactionState =
                     new LegacyIndexTransactionStateImpl( indexConfigStore, legacyIndexProviderLookup );
             KernelTransactionImplementation tx = new KernelTransactionImplementation(
                     statementOperations, schemaWriteGuard,
                     labelScanStore, indexingService, updateableSchemaState, recordState, providerMap,
-                    neoStores, locksClient, hooks, constraintIndexCreator, transactionHeaderInformationFactory,
+                    neoStores, locks, hooks, constraintIndexCreator, transactionHeaderInformationFactory,
                     transactionCommitProcess, transactionMonitor, storeLayer, legacyIndexTransactionState,
-                    localTxPool, constraintSemantics, Clock.SYSTEM_CLOCK, tracers.transactionTracer, procedureCache );
-
+                    localTxPool, constraintSemantics, Clock.SYSTEM_CLOCK, tracers.transactionTracer, procedureCache,
+                    context, txTerminationAwareLocks );
             allTransactions.add( tx );
 
             return tx;
@@ -226,9 +238,7 @@ public class KernelTransactions extends LifecycleAdapter implements Factory<Kern
     {
         for ( KernelTransactionImplementation tx : allTransactions )
         {
-            // we mark all transactions for termination since we want to make sure these transactions
-            // won't be reused, ever. Each transaction has, among other things, a Locks.Client and we
-            // certainly want to keep that from being reused from this point.
+            // We mark all transactions for termination since we want to be on the safe side here.
             tx.markForTermination();
         }
         localTxPool.disposeAll();
@@ -253,5 +263,9 @@ public class KernelTransactions extends LifecycleAdapter implements Factory<Kern
         }
     }
 
-
+    @Override
+    public KernelTransactionsSnapshot get()
+    {
+        return new KernelTransactionsSnapshot( allTransactions );
+    }
 }
