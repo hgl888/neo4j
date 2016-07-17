@@ -65,11 +65,11 @@ import org.neo4j.graphdb.config.Setting;
 import org.neo4j.graphdb.factory.GraphDatabaseBuilder;
 import org.neo4j.graphdb.factory.GraphDatabaseSettings;
 import org.neo4j.graphdb.factory.HighlyAvailableGraphDatabaseFactory;
-import org.neo4j.kernel.configuration.Settings;
 import org.neo4j.helpers.Pair;
 import org.neo4j.helpers.collection.Iterables;
 import org.neo4j.helpers.collection.MapUtil;
 import org.neo4j.kernel.configuration.Config;
+import org.neo4j.kernel.configuration.Settings;
 import org.neo4j.kernel.ha.HaSettings;
 import org.neo4j.kernel.ha.HighlyAvailableGraphDatabase;
 import org.neo4j.kernel.ha.UpdatePuller;
@@ -90,6 +90,7 @@ import org.neo4j.kernel.lifecycle.Lifecycle;
 import org.neo4j.kernel.lifecycle.LifecycleAdapter;
 import org.neo4j.kernel.monitoring.Monitors;
 import org.neo4j.logging.Log;
+
 import static java.lang.String.format;
 import static java.util.Arrays.asList;
 import static java.util.Collections.unmodifiableMap;
@@ -613,6 +614,31 @@ public class ClusterManager
                     }
                 }
                 return true;
+            }
+        };
+    }
+
+    public static Predicate<ClusterManager.ManagedCluster> instanceEvicted( final HighlyAvailableGraphDatabase instance )
+    {
+        return new Predicate<ClusterManager.ManagedCluster>()
+        {
+            @Override
+            public boolean test( ClusterManager.ManagedCluster managedCluster )
+            {
+                InstanceId instanceId = managedCluster.getServerId( instance );
+
+                Iterable<HighlyAvailableGraphDatabase> members = managedCluster.getAllMembers();
+                for ( HighlyAvailableGraphDatabase member : members )
+                {
+                    if ( instanceId.equals( managedCluster.getServerId( member ) ) )
+                    {
+                        if ( member.role().equals( "UNKNOWN" ) )
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
             }
         };
     }
@@ -1246,6 +1272,13 @@ public class ClusterManager
             members.remove( serverId );
             life.remove( db );
             db.shutdown();
+            // Sleep a little to help ensure that the shutdown thread has completed before we return
+            try
+            {
+                Thread.sleep( 50L );
+            }
+            catch ( InterruptedException ignored )
+            {}
             return wrap( new StartDatabaseAgainKit( this, serverId ) );
         }
 

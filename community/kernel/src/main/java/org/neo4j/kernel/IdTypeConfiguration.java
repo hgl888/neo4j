@@ -20,18 +20,29 @@
 package org.neo4j.kernel;
 
 /**
- * Deciding whether or not ids are eligible for being released from buffering since being deleted.
+ * Configuration for any specific id type
+ * @see IdType
+ * @see IdTypeConfigurationProvider
  */
-public interface IdReuseEligibility
+public class IdTypeConfiguration
 {
-    IdReuseEligibility ALWAYS = new IdReuseEligibility()
-    {
-        @Override
-        public boolean isEligible()
-        {
-            return true;
-        }
-    };
+    static final int DEFAULT_GRAB_SIZE = 1024;
+    static final int AGGRESIVE_GRAB_SIZE = 50000;
 
-    boolean isEligible();
+    private final boolean allowAggressiveReuse;
+
+    public IdTypeConfiguration( boolean allowAggressiveReuse )
+    {
+        this.allowAggressiveReuse = allowAggressiveReuse;
+    }
+
+    public boolean allowAggressiveReuse()
+    {
+        return allowAggressiveReuse;
+    }
+
+    public int getGrabSize()
+    {
+        return allowAggressiveReuse ? AGGRESIVE_GRAB_SIZE : DEFAULT_GRAB_SIZE;
+    }
 }
